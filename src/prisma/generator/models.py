@@ -527,10 +527,12 @@ class Config(BaseSettings):
     minimal_runtime: bool = FieldInfo(
         default=True,
         env='PRISMA_PY_CONFIG_MINIMAL_RUNTIME',
+        alias='minimalRuntime',
     )
     separate_model_files: bool = FieldInfo(
         default=False,
         env='PRISMA_PY_CONFIG_SEPARATE_MODEL_FILES',
+        alias='separateModelFiles',
     )
 
     # this seems to be the only good method for setting the contextvar as
