@@ -164,5 +164,5 @@ __prisma__
 # Node
 node_modules
 
-# Binaries
-binaries
+# Binaries (downloaded at root, not source code)
+/binaries
