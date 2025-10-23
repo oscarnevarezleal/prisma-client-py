@@ -71,6 +71,54 @@ generator db {
 }
 ```
 
+### Separate Model Files
+
+!!! tip "Performance Optimization"
+    This option can significantly reduce memory usage for large schemas by only loading models that are actually used at runtime.
+
+By default, all model definitions are generated in a single `models.py` file. When enabled, this option generates each model in its own file under the `models/` directory with lazy loading, meaning models are only imported when first accessed.
+
+This is particularly beneficial for:
+- Large schemas with many models (50+ models)
+- Applications that only use a subset of models
+- Reducing initial import time and memory footprint
+
+**Default:** `false`
+
+#### Example
+
+```prisma
+generator db {
+  provider = "prisma-client-py"
+  separateModelFiles = true
+}
+```
+
+With this configuration:
+- Models are generated as `models/_user.py`, `models/_post.py`, etc.
+- The `models/__init__.py` uses `__getattr__` for lazy loading
+- Import syntax remains the same: `from prisma.models import User, Post`
+- Models are loaded on first access, not at import time
+
+#### Performance Impact
+
+```python
+# Without separate_model_files (all models loaded immediately)
+from prisma.models import User  # Loads ALL 100 models
+# Memory: ~50MB, Time: ~500ms
+
+# With separate_model_files (lazy loading)
+from prisma.models import User  # Only loads User model
+# Memory: ~500KB, Time: ~50ms
+```
+
+#### Compatibility
+
+- ✅ Works with all model operations and relationships
+- ✅ Compatible with partial type generator
+- ✅ Type checking fully supported
+- ✅ Forward references automatically resolved
+
 ### Recursive Type Depth
 
 !!! warning
