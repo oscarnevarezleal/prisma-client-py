@@ -288,6 +288,9 @@ class Generator(GenericGenerator[PythonData]):
 
             if config.partial_type_generator:
                 log.debug('Generating partial types')
+                # Invalidate Python's import cache so newly generated model files can be found
+                import importlib
+                importlib.invalidate_caches()
                 config.partial_type_generator.run()
 
             params['partial_models'] = partial_models_ctx.get()

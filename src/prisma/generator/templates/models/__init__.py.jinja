@@ -8,10 +8,53 @@ This reduces memory usage for large schemas where only a subset of models are us
 """
 from typing import TYPE_CHECKING, Any
 
+# Declare all available models for import
+__all__ = [
+    {% for model in dmmf.datamodel.models -%}
+    '{{ model.name }}',
+    {% endfor -%}
+]
+
 # Cache for loaded models
 _model_cache: dict[str, Any] = {}
-# Track models currently being rebuilt to prevent infinite recursion
-_rebuilding: set[str] = set()
+# Track if we're currently rebuilding to prevent recursion
+_rebuilding: bool = False
+
+
+def _rebuild_models() -> None:
+    """Rebuild all loaded models to resolve forward references.
+
+    This is called after model access to ensure forward references are resolved.
+    Uses a global flag to prevent re-entry during rebuilding.
+    """
+    global _rebuilding
+
+    if _rebuilding:
+        return
+
+    import sys
+    import os
+
+    # Skip during generation
+    if os.environ.get('PRISMA_GENERATOR_INVOCATION'):
+        return
+
+    _rebuilding = True
+    try:
+        models_module = sys.modules[__name__]
+
+        # Get a snapshot of models to rebuild
+        models_to_rebuild = list(_model_cache.values())
+
+        # Rebuild each model
+        for model_class in models_to_rebuild:
+            try:
+                model_class.model_rebuild(_types_namespace={'models': models_module})
+            except Exception:
+                # If rebuild fails, Pydantic will resolve lazily
+                pass
+    finally:
+        _rebuilding = False
 
 
 def __getattr__(name: str) -> Any:
@@ -33,26 +76,21 @@ def __getattr__(name: str) -> Any:
     try:
         import importlib
         import sys
+        import os
 
         # Model files are named _<lowercase_model_name>.py
         module_name = f'._{name.lower()}'
         module = importlib.import_module(module_name, package=__name__)
         model_class = getattr(module, name)
 
-        # Cache the model class first, before calling model_rebuild
-        # This allows circular references to find the class
+        # Cache the model class
         _model_cache[name] = model_class
 
-        # Rebuild the model to resolve forward references, but only if not already rebuilding
-        # to prevent infinite recursion with circular dependencies
-        if name not in _rebuilding:
-            _rebuilding.add(name)
-            try:
-                # Pass the models module (self) as namespace for forward reference resolution
-                models_module = sys.modules[__name__]
-                model_class.model_rebuild(_types_namespace={'models': models_module})
-            finally:
-                _rebuilding.discard(name)
+        # Rebuild models after loading to resolve forward references
+        # This is safe because the model is already cached, preventing recursion
+        import os
+        if not os.environ.get('PRISMA_GENERATOR_INVOCATION'):
+            _rebuild_models()
 
         return model_class
     except (ImportError, AttributeError) as e:
