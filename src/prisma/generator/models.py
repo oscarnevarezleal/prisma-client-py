@@ -528,6 +528,10 @@ class Config(BaseSettings):
         default=True,
         env='PRISMA_PY_CONFIG_MINIMAL_RUNTIME',
     )
+    separate_model_files: bool = FieldInfo(
+        default=False,
+        env='PRISMA_PY_CONFIG_SEPARATE_MODEL_FILES',
+    )
 
     # this seems to be the only good method for setting the contextvar as
     # we don't control the actual construction of the object like we do for
@@ -583,6 +587,17 @@ class Config(BaseSettings):
         if minimal_runtime is not None:
             values['minimal_runtime'] = minimal_runtime
             values.pop('minimalRuntime', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_separate_model_files(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        separate_model_files = values.get('separateModelFiles')
+        if separate_model_files is not None:
+            values['separate_model_files'] = separate_model_files
+            values.pop('separateModelFiles', None)
 
         return values
 
