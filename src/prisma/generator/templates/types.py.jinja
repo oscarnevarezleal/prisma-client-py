@@ -1,6 +1,83 @@
 {% include '_header.py.jinja' %}
 {% from '_utils.py.jinja' import recursive_types, active_provider with context %}
 # -- template types.py.jinja --
+{% if minimal_runtime|default(false) %}
+# Minimal runtime version - full types are in types.pyi
+from typing import Any, TypeVar
+
+import httpx
+from . import _types
+from .utils import _NoneType
+
+SortMode = _types.SortMode
+SortOrder = _types.SortOrder
+MetricsFormat = _types.MetricsFormat
+DatasourceOverride = _types.DatasourceOverride
+HttpConfig = _types.HttpConfig
+
+# Simplified type alias - actual type definition in .pyi
+Serializable = Any
+
+# Generic dict-like class for runtime type instantiation
+class _TypedDictProxy(dict):
+    """Pass-through dict that behaves like TypedDict at runtime.
+
+    This allows code like `ServiceCreateInput(**data)` to work
+    while keeping minimal memory footprint.
+    """
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+
+    def __call__(self, **kwargs: Any) -> dict:
+        """Allow class to be called like TypedDict."""
+        return dict(**kwargs)
+
+# All filter and query types aliased to _TypedDictProxy
+{% for model in dmmf.datamodel.models %}
+# {{ model.name }} types
+{{ model.name }}WhereInput = _TypedDictProxy
+{{ model.name }}OrderByInput = _TypedDictProxy
+{{ model.name }}WhereUniqueInput = _TypedDictProxy
+{{ model.name }}CreateInput = _TypedDictProxy
+{{ model.name }}UpdateInput = _TypedDictProxy
+{{ model.name }}UpdateManyMutationInput = _TypedDictProxy
+{{ model.name }}CreateWithoutRelationsInput = _TypedDictProxy
+{{ model.name }}UpdateWithoutRelationsInput = _TypedDictProxy
+{{ model.name }}OptionalCreateInput = _TypedDictProxy
+{{ model.name }}OptionalUpdateInput = _TypedDictProxy
+{{ model.name }}OptionalCreateWithoutRelationsInput = _TypedDictProxy
+{{ model.name }}Include = _TypedDictProxy
+{{ model.name }}Select = _TypedDictProxy
+{{ model.name }}UpsertInput = _TypedDictProxy
+{{ model.name }}ConnectOrCreateWithoutRelationsInput = _TypedDictProxy
+{{ model.name }}CreateNestedWithoutRelationsInput = _TypedDictProxy
+{{ model.name }}CreateManyNestedWithoutRelationsInput = _TypedDictProxy
+{{ model.name }}UpdateOneWithoutRelationsInput = _TypedDictProxy
+{{ model.name }}UpdateManyWithoutRelationsInput = _TypedDictProxy
+{{ model.name }}ListRelationFilter = _TypedDictProxy
+{{ model.name }}ScalarWhereWithAggregatesInput = _TypedDictProxy
+{{ model.name }}GroupByOutput = _TypedDictProxy
+{{ model.name }}AvgAggregateOutput = _TypedDictProxy
+{{ model.name }}SumAggregateOutput = _TypedDictProxy
+{{ model.name }}MinAggregateInput = _TypedDictProxy
+{{ model.name }}MaxAggregateInput = _TypedDictProxy
+{{ model.name }}NumberAggregateInput = _TypedDictProxy
+{{ model.name }}ScalarAggregateOutput = _TypedDictProxy
+{{ model.name }}Keys = str  # Simplified from Literal
+{{ model.name }}ScalarFieldKeys = str  # Simplified from Literal
+{{ model.name }}ScalarFieldKeysT = TypeVar('{{ model.name }}ScalarFieldKeysT', bound=str)
+{% if model.has_relational_fields -%}
+{{ model.name }}RelationalFieldKeys = str
+{% else -%}
+{{ model.name }}RelationalFieldKeys = _NoneType
+{% endif %}
+{% endfor %}
+
+# Import to maintain compatibility
+from . import types, enums, models, fields
+
+{% else %}
+# Full type definitions for stub file (.pyi)
 from typing import TypeVar
 
 import httpx
@@ -780,3 +857,5 @@ class {{ model.name }}NumberAggregateInput(TypedDict, total=False):
 
 # we have to import ourselves as types can be namespaced to types
 from . import types, enums, models, fields
+
+{% endif %}

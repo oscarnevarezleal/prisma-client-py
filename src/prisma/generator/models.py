@@ -355,6 +355,22 @@ class GenericData(GenericModel, Generic[ConfigT]):
         params['type_schema'] = Schema.from_data(self)
         params['client_types'] = ClientTypes.from_data(self)
 
+        # Add config fields to params (including minimal_runtime)
+        config_vars = vars(self.generator.config)
+
+        # Debug: Write config to file
+        import json
+        with open('/tmp/prisma_params_debug.json', 'w') as f:
+            json.dump({
+                'config_vars': {k: str(v) for k, v in config_vars.items()},
+                'minimal_runtime_in_config': 'minimal_runtime' in config_vars,
+                'minimal_runtime_value': str(config_vars.get('minimal_runtime')),
+            }, f, indent=2)
+
+        for key, value in config_vars.items():
+            if key not in params:  # Don't override existing params
+                params[key] = value
+
         # add utility functions
         for func in [
             sql_param,
@@ -508,6 +524,11 @@ class Config(BaseSettings):
     # https://github.com/prisma/prisma/issues/12442
     enable_experimental_decimal: bool = FieldInfo(default=False, env='PRISMA_PY_CONFIG_ENABLE_EXPERIMENTAL_DECIMAL')
 
+    minimal_runtime: bool = FieldInfo(
+        default=True,
+        env='PRISMA_PY_CONFIG_MINIMAL_RUNTIME',
+    )
+
     # this seems to be the only good method for setting the contextvar as
     # we don't control the actual construction of the object like we do for
     # the Data model.
@@ -551,6 +572,17 @@ class Config(BaseSettings):
         if engine_type is not None:
             values['engine_type'] = engine_type
             values.pop('engineType', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_minimal_runtime(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        minimal_runtime = values.get('minimalRuntime')
+        if minimal_runtime is not None:
+            values['minimal_runtime'] = minimal_runtime
+            values.pop('minimalRuntime', None)
 
         return values
 

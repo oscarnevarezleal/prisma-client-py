@@ -45,6 +45,9 @@ GENERIC_GENERATOR_NAME = 'prisma.generator.generator.GenericGenerator'
 # set of templates that should be rendered after every other template
 DEFERRED_TEMPLATES = {'partials.py.jinja'}
 
+# Templates that should generate stub files (.pyi) with minimal runtime .py files
+STUB_FILE_TEMPLATES = {'types.py.jinja', 'models.py.jinja', 'client.py.jinja', 'actions.py.jinja'}
+
 DEFAULT_ENV = Environment(
     trim_blocks=True,
     lstrip_blocks=True,
@@ -247,7 +250,15 @@ class Generator(GenericGenerator[PythonData]):
                 if not name.endswith('.py.jinja') or name.startswith('_') or name in DEFERRED_TEMPLATES:
                     continue
 
-                render_template(rootdir, name, params)
+                # For stub file templates, generate both .pyi (full types) and .py (minimal runtime)
+                if name in STUB_FILE_TEMPLATES:
+                    # Generate .pyi stub file with full types (always minimal_runtime=False for stubs)
+                    render_stub_file(rootdir, name, {**params, 'generate_stub': True, 'minimal_runtime': False})
+                    # Generate minimal .py runtime file (uses config.minimal_runtime setting)
+                    render_template(rootdir, name, {**params, 'generate_stub': False})
+                else:
+                    # Regular templates - just generate .py
+                    render_template(rootdir, name, params)
 
             if config.partial_type_generator:
                 log.debug('Generating partial types')
@@ -255,7 +266,11 @@ class Generator(GenericGenerator[PythonData]):
 
             params['partial_models'] = partial_models_ctx.get()
             for name in DEFERRED_TEMPLATES:
-                render_template(rootdir, name, params)
+                if name in STUB_FILE_TEMPLATES:
+                    render_stub_file(rootdir, name, {**params, 'generate_stub': True, 'minimal_runtime': False})
+                    render_template(rootdir, name, {**params, 'generate_stub': False})
+                else:
+                    render_template(rootdir, name, params)
         except:
             cleanup_templates(rootdir, env=DEFAULT_ENV)
             raise
@@ -275,6 +290,43 @@ def cleanup_templates(rootdir: Path, *, env: Optional[Environment] = None) -> No
             file.unlink()
 
 
+def _strip_docstrings(code: str) -> str:
+    """Strip docstrings from Python code to reduce file size.
+
+    This is a simple regex-based approach that removes triple-quoted strings
+    that appear after function/class/method definitions, and replaces them
+    with 'pass' if the function would otherwise be empty.
+    """
+    import re
+
+    # Pattern to match docstrings (triple quotes with content), capturing surrounding whitespace
+    pattern = r'(\n\s+)("""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\')(\s*\n)'
+
+    def replacer(match: 're.Match[str]') -> str:
+        before = match.group(1)
+        after = match.group(3)
+
+        # Check if next non-empty line after the docstring starts with def, class, @, or is dedented
+        # If so, we need to add 'pass' to avoid empty function body
+        remaining = code[match.end():]
+        next_line_match = re.match(r'(\s*)([@\w])', remaining)
+
+        if next_line_match:
+            next_indent = len(next_line_match.group(1))
+            current_indent = len(before) - 1  # -1 for the \n
+
+            # If next line is dedented or starts with @ or def, we need pass
+            if next_indent <= current_indent:
+                return before + 'pass' + after
+
+        # Otherwise, just remove the docstring
+        return before[:-len(before.lstrip('\n'))] + before.lstrip('\n') if before.strip() else after
+
+    result = re.sub(pattern, replacer, code)
+
+    return result
+
+
 def render_template(
     rootdir: Path,
     name: str,
@@ -288,12 +340,41 @@ def render_template(
     template = env.get_template(name)
     output = template.render(**params)
 
+    # Strip docstrings from minimal runtime if enabled
+    if params.get('minimal_runtime') and name in ('actions.py.jinja', 'models.py.jinja', 'client.py.jinja'):
+        output = _strip_docstrings(output)
+
     file = resolve_template_path(rootdir=rootdir, name=name)
     if not file.parent.exists():
         file.parent.mkdir(parents=True, exist_ok=True)
 
     file.write_bytes(output.encode(sys.getdefaultencoding()))
     log.debug('Rendered template to %s', file.absolute())
+
+
+def render_stub_file(
+    rootdir: Path,
+    name: str,
+    params: Dict[str, Any],
+    *,
+    env: Optional[Environment] = None,
+) -> None:
+    """Render a template as a .pyi stub file for type checking."""
+    if env is None:
+        env = DEFAULT_ENV
+
+    template = env.get_template(name)
+    output = template.render(**params)
+
+    # Get the .py file path and convert to .pyi
+    py_file = resolve_template_path(rootdir=rootdir, name=name)
+    stub_file = py_file.with_suffix('.pyi')
+
+    if not stub_file.parent.exists():
+        stub_file.parent.mkdir(parents=True, exist_ok=True)
+
+    stub_file.write_bytes(output.encode(sys.getdefaultencoding()))
+    log.debug('Rendered stub file to %s', stub_file.absolute())
 
 
 def _write_debug_data(name: str, output: str) -> None:
