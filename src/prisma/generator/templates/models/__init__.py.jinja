@@ -1,0 +1,63 @@
+{% include '_header.py.jinja' %}
+# -- template models/__init__.py.jinja --
+"""
+Lazy-loading models module.
+
+Each model is in its own file and loaded on-demand when accessed.
+This reduces memory usage for large schemas where only a subset of models are used.
+"""
+from typing import TYPE_CHECKING, Any
+
+# Cache for loaded models
+_model_cache: dict[str, Any] = {}
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy load model classes on first access.
+
+    Args:
+        name: The model class name to load
+
+    Returns:
+        The model class
+
+    Raises:
+        AttributeError: If the model doesn't exist
+    """
+    if name in _model_cache:
+        return _model_cache[name]
+
+    # Try to import the model from its file
+    try:
+        import importlib
+        # Model files are named _<lowercase_model_name>.py
+        module_name = f'._{name.lower()}'
+        module = importlib.import_module(module_name, package=__name__)
+        model_class = getattr(module, name)
+        _model_cache[name] = model_class
+
+        # Note: We don't call model_rebuild() here because:
+        # 1. It can cause infinite recursion with circular dependencies
+        # 2. Pydantic will lazily resolve forward references when needed
+        # 3. The models module is available in the namespace for resolution
+
+        return model_class
+    except (ImportError, AttributeError) as e:
+        raise AttributeError(f"module '{__name__}' has no attribute '{name}'") from e
+
+
+def __dir__() -> list[str]:
+    """Return list of available model names."""
+    return [
+        {% for model in dmmf.datamodel.models -%}
+        '{{ model.name }}',
+        {% endfor -%}
+    ]
+
+
+# For type checking, import all models
+if TYPE_CHECKING:
+    # Import individual model files for type checking
+    {%- for model in dmmf.datamodel.models %}
+    from ._{{ model.name.lower() }} import {{ model.name }}
+    {%- endfor %}
