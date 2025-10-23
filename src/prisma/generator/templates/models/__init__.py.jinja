@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 # Cache for loaded models
 _model_cache: dict[str, Any] = {}
+# Track models currently being rebuilt to prevent infinite recursion
+_rebuilding: set[str] = set()
 
 
 def __getattr__(name: str) -> Any:
@@ -30,16 +32,27 @@ def __getattr__(name: str) -> Any:
     # Try to import the model from its file
     try:
         import importlib
+        import sys
+
         # Model files are named _<lowercase_model_name>.py
         module_name = f'._{name.lower()}'
         module = importlib.import_module(module_name, package=__name__)
         model_class = getattr(module, name)
+
+        # Cache the model class first, before calling model_rebuild
+        # This allows circular references to find the class
         _model_cache[name] = model_class
 
-        # Note: We don't call model_rebuild() here because:
-        # 1. It can cause infinite recursion with circular dependencies
-        # 2. Pydantic will lazily resolve forward references when needed
-        # 3. The models module is available in the namespace for resolution
+        # Rebuild the model to resolve forward references, but only if not already rebuilding
+        # to prevent infinite recursion with circular dependencies
+        if name not in _rebuilding:
+            _rebuilding.add(name)
+            try:
+                # Pass the models module (self) as namespace for forward reference resolution
+                models_module = sys.modules[__name__]
+                model_class.model_rebuild(_types_namespace={'models': models_module})
+            finally:
+                _rebuilding.discard(name)
 
         return model_class
     except (ImportError, AttributeError) as e:
