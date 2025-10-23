@@ -125,10 +125,15 @@ tmp/
 src/prisma/http.py
 src/prisma/bases.py
 src/prisma/types.py
+src/prisma/types.pyi
 src/prisma/enums.py
 src/prisma/client.py
+src/prisma/client.pyi
 src/prisma/models.py
+src/prisma/models.pyi
+src/prisma/models/
 src/prisma/actions.py
+src/prisma/actions.pyi
 src/prisma/metadata.py
 src/prisma/partials.py
 src/prisma/engine/http.py
