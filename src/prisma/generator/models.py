@@ -357,16 +357,6 @@ class GenericData(GenericModel, Generic[ConfigT]):
 
         # Add config fields to params (including minimal_runtime)
         config_vars = vars(self.generator.config)
-
-        # Debug: Write config to file
-        import json
-        with open('/tmp/prisma_params_debug.json', 'w') as f:
-            json.dump({
-                'config_vars': {k: str(v) for k, v in config_vars.items()},
-                'minimal_runtime_in_config': 'minimal_runtime' in config_vars,
-                'minimal_runtime_value': str(config_vars.get('minimal_runtime')),
-            }, f, indent=2)
-
         for key, value in config_vars.items():
             if key not in params:  # Don't override existing params
                 params[key] = value
@@ -534,6 +524,12 @@ class Config(BaseSettings):
         env='PRISMA_PY_CONFIG_SEPARATE_MODEL_FILES',
         alias='separateModelFiles',
     )
+    scalar_fields_only: bool = FieldInfo(
+        default=False,
+        env='PRISMA_PY_CONFIG_SCALAR_FIELDS_ONLY',
+        alias='scalarFieldsOnly',
+        description='Skip relationship fields in models to avoid circular validation and reduce memory',
+    )
 
     # this seems to be the only good method for setting the contextvar as
     # we don't control the actual construction of the object like we do for
@@ -600,6 +596,17 @@ class Config(BaseSettings):
         if separate_model_files is not None:
             values['separate_model_files'] = separate_model_files
             values.pop('separateModelFiles', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_scalar_fields_only(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        scalar_fields_only = values.get('scalarFieldsOnly')
+        if scalar_fields_only is not None:
+            values['scalar_fields_only'] = scalar_fields_only
+            values.pop('scalarFieldsOnly', None)
 
         return values
 

@@ -31,17 +31,20 @@ class {{ model.name }}(bases.Base{{ model.name }}):
     """{{ format_documentation(model.documentation) }}"""
     {% endif %}
 
-    {% for field in model.all_fields %}
+    {% for field in model.all_fields -%}
+    {# Skip relationship fields if scalar_fields_only is enabled #}
+    {% if not (scalar_fields_only and field.relation_name) %}
     {{ field.name }}:
             {%- if field.is_required and not field.relation_name -%}
                 {{ ' ' }}{{ field.python_type }}
             {% else -%}
                 {{ ' ' }}Optional[{{ field.python_type }}] = None
-            {% endif %}
-    {% if not field.documentation is none %}
+            {% endif -%}
+    {% if not field.documentation is none -%}
     """{{ format_documentation(field.documentation) }}"""
 
-    {% endif %}
+    {% endif -%}
+    {% endif -%}
     {% endfor %}
 
     {% if not recursive_types %}

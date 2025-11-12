@@ -523,20 +523,24 @@ class _{{ type }}ListUpdatePush(TypedDict):
 
 class {{ model.name }}OptionalCreateInput(TypedDict, total=False):
     """Optional arguments to the {{ model.name }} create method"""
-    {% for field in model.all_fields %}
-        {%- if not field.required_on_create or field.is_read_only -%}
-            {{'    '}}{{ field.name }}: {{ field.maybe_optional(field.create_input_type) }}
-        {% endif %}
-    {% endfor %}
+{% for field in model.all_fields -%}
+{%- if not (scalar_fields_only and field.relation_name) %}
+{%- if not field.required_on_create or field.is_read_only %}
+    {{ field.name }}: {{ field.maybe_optional(field.create_input_type) }}
+{% endif -%}
+{%- endif -%}
+{%- endfor %}
 
 
 class {{ model.name }}CreateInput({{ model.name }}OptionalCreateInput):
     """Required arguments to the {{ model.name }} create method"""
-    {% for field in model.all_fields %}
-        {%- if field.required_on_create and not field.is_read_only -%}
-            {{'    '}}{{ field.name }}: {{ field.maybe_optional(field.create_input_type) }}
-        {% endif %}
-    {% endfor %}
+{% for field in model.all_fields -%}
+{%- if not (scalar_fields_only and field.relation_name) %}
+{%- if field.required_on_create and not field.is_read_only %}
+    {{ field.name }}: {{ field.maybe_optional(field.create_input_type) }}
+{% endif -%}
+{%- endif -%}
+{%- endfor %}
 
 
 # TODO: remove this in favour of without explicit relations
@@ -578,11 +582,13 @@ class {{ model.name }}CreateManyNestedWithoutRelationsInput(TypedDict, total=Fal
 
 class {{ model.name }}UpdateInput(TypedDict, total=False):
     """Optional arguments for updating a record"""
-    {% for field in model.all_fields %}
-        {%- if not field.is_read_only -%}
-            {{'    '}}{{ field.name }}: {{ field.maybe_optional(field.get_update_input_type()) }}
-        {% endif %}
-    {% endfor %}
+{% for field in model.all_fields -%}
+{%- if not (scalar_fields_only and field.relation_name) %}
+{%- if not field.is_read_only %}
+    {{ field.name }}: {{ field.maybe_optional(field.get_update_input_type()) }}
+{% endif -%}
+{%- endif -%}
+{%- endfor %}
 
 
 class {{ model.name }}UpdateManyMutationInput(TypedDict, total=False):
@@ -658,11 +664,18 @@ class {{ model.name }}ListRelationFilter(TypedDict, total=False):
     every: '{{ where_input_type }}'
 
 
+{% if not scalar_fields_only %}
 class {{ model.name }}Include(TypedDict, total=False):
     """{{ model.name }} relational arguments"""
     {% for field in model.relational_fields -%}
         {{'    '}}{{ field.name }}: Union[bool, '{{ field.relational_args_type }}From{{ model.name }}']
     {% endfor %}
+{% else %}
+# Include type not available when scalar_fields_only is enabled
+class {{ model.name }}Include(TypedDict, total=False):
+    """Include type disabled - scalar_fields_only mode excludes relationships"""
+    pass
+{% endif %}
 
 
 {% for related in dmmf.datamodel.models %}
@@ -708,9 +721,11 @@ FindFirst{{ model.name }}Args = FindMany{{ model.name }}ArgsFrom{{ model.name}}
 {% call(current, next, iteration) recursive(model.name + 'WhereInput') %}
 class {{ current }}(TypedDict, total=False):
     """{{ model.name }} arguments for searching"""
-    {% for field in model.all_fields -%}
-        {{'    '}}{{ field.name }}: {{ field.where_input_type }}
-    {% endfor %}
+{% for field in model.all_fields -%}
+{%- if not (scalar_fields_only and field.relation_name) %}
+    {{ field.name }}: {{ field.where_input_type }}
+{% endif -%}
+{%- endfor %}
 
     {% if next != '' %}
     # should be noted that AND and NOT should be Union['{{ next }}', List['{{ next }}']]
@@ -831,9 +846,12 @@ class {{ model.name }}NumberAggregateInput(TypedDict, total=False):
 
 
 {{ model.name }}Keys = Literal[
-    {% for field in model.all_fields %}
+    {% for field in model.all_fields -%}
+    {# Skip relationship fields if scalar_fields_only is enabled #}
+    {%- if not (scalar_fields_only and field.relation_name) -%}
     '{{ field.name }}',
-    {% endfor %}
+    {%- endif -%}
+    {%- endfor %}
 ]
 {{ model.name }}ScalarFieldKeys = Literal[
     {% for field in model.scalar_fields %}

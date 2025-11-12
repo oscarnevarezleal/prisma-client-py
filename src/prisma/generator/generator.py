@@ -231,6 +231,11 @@ class Generator(GenericGenerator[PythonData]):
     def generate(self, data: PythonData) -> None:
         config = data.generator.config
         rootdir = Path(data.generator.output.value)
+        
+        # Write a marker file to confirm this modified generator is running
+        marker_file = rootdir / 'GENERATOR_MARKER.txt'
+        marker_file.write_text(f'Modified generator ran at {rootdir}\nminimal_runtime={config.minimal_runtime}\nseparate_model_files={config.separate_model_files}')
+        
         if not rootdir.exists():
             rootdir.mkdir(parents=True, exist_ok=True)
 
@@ -278,6 +283,7 @@ class Generator(GenericGenerator[PythonData]):
 
                 # For stub file templates, generate both .pyi (full types) and .py (minimal runtime)
                 if name in STUB_FILE_TEMPLATES:
+                    log.info('Generating stub file pair for: %s (minimal_runtime=%s)', name, params.get('minimal_runtime'))
                     # Generate .pyi stub file with full types (always minimal_runtime=False for stubs)
                     render_stub_file(rootdir, name, {**params, 'generate_stub': True, 'minimal_runtime': False})
                     # Generate minimal .py runtime file (uses config.minimal_runtime setting)
@@ -410,6 +416,7 @@ def render_stub_file(
     if env is None:
         env = DEFAULT_ENV
 
+    log.debug('Rendering stub file for template: %s', name)
     template = env.get_template(name)
     output = template.render(**params)
 
@@ -417,11 +424,13 @@ def render_stub_file(
     py_file = resolve_template_path(rootdir=rootdir, name=name)
     stub_file = py_file.with_suffix('.pyi')
 
+    log.debug('Stub file path: %s', stub_file.absolute())
+
     if not stub_file.parent.exists():
         stub_file.parent.mkdir(parents=True, exist_ok=True)
 
     stub_file.write_bytes(output.encode(sys.getdefaultencoding()))
-    log.debug('Rendered stub file to %s', stub_file.absolute())
+    log.info('✓ Rendered stub file to %s', stub_file.absolute())
 
 
 def _write_debug_data(name: str, output: str) -> None:

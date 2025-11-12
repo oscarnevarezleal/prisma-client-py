@@ -36,6 +36,17 @@ def _check_generated_code() -> bool:
             import sys
             from pathlib import Path
 
+            # Check if we're being called from the generator
+            # If so, allow imports even if client.py doesn't exist yet
+            import inspect
+            frame = inspect.currentframe()
+            while frame:
+                frame_info = inspect.getframeinfo(frame)
+                if 'generator' in frame_info.filename:
+                    _generated_code_exists = True
+                    return True
+                frame = frame.f_back
+
             # Check if client.py exists
             module_path = Path(__file__).parent / 'client.py'
             _generated_code_exists = module_path.exists()
@@ -49,15 +60,21 @@ def _lazy_load_module(name: str) -> Any:
     if name in _lazy_imports:
         return _lazy_imports[name]
 
+    # Allow imports of these modules even during generation
+    # They are needed by the generated model files themselves
+    allowed_during_generation = {'enums', 'fields', 'types', 'bases', 'errors'}
+    
     # Check if generated code exists
     if not _check_generated_code():
-        if name in {'Prisma', 'Client', 'models', 'types', 'bases', 'partials'}:
-            raise RuntimeError(
-                "The Client hasn't been generated yet, "
-                'you must run `prisma generate` before you can use the client.\n'
-                'See https://prisma-client-py.readthedocs.io/en/stable/reference/troubleshooting/#client-has-not-been-generated-yet'
-            )
-        raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+        # Allow certain modules during generation
+        if name not in allowed_during_generation:
+            if name in {'Prisma', 'Client', 'models', 'types', 'bases', 'partials'}:
+                raise RuntimeError(
+                    "The Client hasn't been generated yet, "
+                    'you must run `prisma generate` before you can use the client.\n'
+                    'See https://prisma-client-py.readthedocs.io/en/stable/reference/troubleshooting/#client-has-not-been-generated-yet'
+                )
+            raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
     # Use importlib to avoid triggering __getattr__ recursion
     import importlib
@@ -65,7 +82,40 @@ def _lazy_load_module(name: str) -> Any:
 
     # Import the requested module/attribute
     try:
-        if name == 'models':
+        # Handle enums and fields which may be needed during generation
+        if name == 'enums':
+            try:
+                module = importlib.import_module('.enums', package=__name__)
+                _lazy_imports['enums'] = module
+                return module
+            except (ImportError, ModuleNotFoundError):
+                # If it doesn't exist yet, that's okay during generation
+                raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+        elif name == 'fields':
+            try:
+                module = importlib.import_module('.fields', package=__name__)
+                _lazy_imports['fields'] = module
+                return module
+            except (ImportError, ModuleNotFoundError):
+                # If it doesn't exist yet, that's okay during generation
+                raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+        elif name == 'types':
+            try:
+                module = importlib.import_module('.types', package=__name__)
+                _lazy_imports['types'] = module
+                return module
+            except (ImportError, ModuleNotFoundError):
+                # If it doesn't exist yet, that's okay during generation
+                raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+        elif name == 'bases':
+            try:
+                module = importlib.import_module('.bases', package=__name__)
+                _lazy_imports['bases'] = module
+                return module
+            except (ImportError, ModuleNotFoundError):
+                # If it doesn't exist yet, that's okay during generation
+                raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+        elif name == 'models':
             module = importlib.import_module('.models', package=__name__)
             _lazy_imports['models'] = module
             return module
