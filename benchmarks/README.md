@@ -64,27 +64,50 @@ that agreement is what makes the fast `flags` mode trustworthy.
 
 ## Representative results
 
-Synthetic schema, each model = 6 scalar fields + a chain relation, `recursive_type_depth = 5`,
-Python 3.11. Optimized = `minimal_runtime` + `scalar_fields_only`.
+Synthetic schema (each model = 6 scalar fields + a chain relation), Python 3.11,
+optimized = `minimal_runtime` + `scalar_fields_only`. Numbers are medians.
 
-**20 models (`--mode both`)**
+### Consolidated matrix
 
-| variant | import (ms) | peak RSS (MB) | runtime .py (KB) | types.py (KB) |
-| --- | ---: | ---: | ---: | ---: |
-| upstream-0.15.0 | 738 | 70.9 | 3050 | 1708 |
-| fork-baseline | 772 | 75.9 | 3063 | 1707 |
-| **fork-optimized** | **312** | **31.1** | **1006** | **31** |
+`baseline` is upstream-equivalent (verified against a real upstream install in `both` mode;
+the two agree within noise). "unimportable" = the un-optimized client raises Pydantic
+`RecursionError` on import at that scale.
 
-**50 models (`--mode flags`)**
+**peak RSS (MB) — baseline → optimized**
 
-| variant | import (ms) | peak RSS (MB) | runtime .py (KB) | types.py (KB) |
-| --- | ---: | ---: | ---: | ---: |
-| fork-baseline | 3185 | 286.5 | 12073 | 9435 |
-| **fork-optimized** | **373** | **33.6** | **1761** | **76** |
+| models | depth `5` | depth `-1` |
+| ---: | --- | --- |
+| 20  | 75.9 → **31.1**  (−59%) | 50.8 → **35.6**  (−30%) |
+| 50  | 286.5 → **33.6**  (−88%) | 109.2 → **33.4**  (−69%) |
+| 100 | *unimportable* → **35.4** | *unimportable* → **34.9** |
 
-The win **grows with schema size**: the bulk of upstream's runtime cost is the recursive
-query types in `types.py`, which expand super-linearly with model count. `minimal_runtime`
-moves those into `.pyi` stubs (type-checkers still see full types) and keeps the runtime slim.
+**`types.py` size (KB) — baseline → optimized**
+
+| models | depth `5` | depth `-1` |
+| ---: | --- | --- |
+| 20  | 1,707 → **31** | 479 → **31** |
+| 50  | 9,435 → **76** | 2,186 → **76** |
+| 100 | 36,170 → **150** | 7,711 → **150** |
+
+**import time (ms) — baseline → optimized**
+
+| models | depth `5` | depth `-1` |
+| ---: | --- | --- |
+| 20  | 772 → **312** | 636 → **387** |
+| 50  | 3,185 → **373** | 1,705 → **360** |
+| 100 | *unimportable* → **392** | *unimportable* → **414** |
+
+### Takeaways
+
+- **The optimized client stays roughly flat** (~31–36 MB RSS, ~150 KB `types.py`, ~0.4 s import)
+  as the schema grows, while the baseline explodes super-linearly until it fails to import.
+- **The win grows with schema size.** Most of the baseline's cost is the recursive query
+  types in `types.py`; `minimal_runtime` moves those into `.pyi` stubs (type-checkers still
+  see full types) and keeps the runtime slim.
+- **`recursive_type_depth = -1` (the maintainer's workaround) helps but isn't enough at scale.**
+  It shrinks the baseline ~5× and is importable for small/medium schemas, but at 100 chained
+  models it *still* hits `RecursionError` — the optimized variant is what keeps the client
+  loadable. (See the caveat below about chain topology.)
 
 ## Notes / caveats
 
@@ -95,6 +118,10 @@ moves those into `.pyi` stubs (type-checkers still see full types) and keeps the
   comparison, not an absolute footprint.
 - `.pyi` stub files are excluded from the runtime-size metric (they aren't imported at runtime),
   but `measure_sizes` records them in the raw JSON.
+- The synthetic schema chains models linearly (`Model0 → Model1 → … → ModelN`), a near-worst-case
+  for recursive-type resolution. The import-time `RecursionError` at 100 models is the extreme
+  tail; the size and flat-memory results are the robustly generalizable ones. Real schemas with
+  shallower relation graphs may import the baseline fine at the same model count.
 
 ## Files
 
