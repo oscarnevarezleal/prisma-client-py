@@ -280,15 +280,13 @@ class Generator(GenericGenerator[PythonData]):
                     # Always skip models/* templates in the main loop
                     continue
 
-                # For stub file templates, generate both .pyi (full types) and .py (minimal runtime)
-                if name in STUB_FILE_TEMPLATES:
-                    log.info('Generating stub file pair for: %s (minimal_runtime=%s)', name, params.get('minimal_runtime'))
-                    # Generate .pyi stub file with full types (always minimal_runtime=False for stubs)
+                # With minimal_runtime, split into a .pyi stub (full types for type
+                # checkers) + a slim .py runtime. Without it, emit a single full .py
+                # and no stub, i.e. upstream-equivalent output.
+                if name in STUB_FILE_TEMPLATES and config.minimal_runtime:
                     render_stub_file(rootdir, name, {**params, 'generate_stub': True, 'minimal_runtime': False})
-                    # Generate minimal .py runtime file (uses config.minimal_runtime setting)
                     render_template(rootdir, name, {**params, 'generate_stub': False})
                 else:
-                    # Regular templates - just generate .py
                     render_template(rootdir, name, params)
 
             if config.partial_type_generator:
@@ -300,7 +298,7 @@ class Generator(GenericGenerator[PythonData]):
 
             params['partial_models'] = partial_models_ctx.get()
             for name in DEFERRED_TEMPLATES:
-                if name in STUB_FILE_TEMPLATES:
+                if name in STUB_FILE_TEMPLATES and config.minimal_runtime:
                     render_stub_file(rootdir, name, {**params, 'generate_stub': True, 'minimal_runtime': False})
                     render_template(rootdir, name, {**params, 'generate_stub': False})
                 else:

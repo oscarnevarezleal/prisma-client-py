@@ -562,7 +562,7 @@ class Config(BaseSettings):
     enable_experimental_decimal: bool = FieldInfo(default=False, env='PRISMA_PY_CONFIG_ENABLE_EXPERIMENTAL_DECIMAL')
 
     minimal_runtime: bool = FieldInfo(
-        default=True,
+        default=False,
         env='PRISMA_PY_CONFIG_MINIMAL_RUNTIME',
         alias='minimalRuntime',
     )

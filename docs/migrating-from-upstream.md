@@ -19,14 +19,13 @@ See [`benchmarks/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/de
 
 | Generator option (schema `generator` block) | Env var | Default here | Upstream |
 | --- | --- | --- | --- |
-| `minimalRuntime` | `PRISMA_PY_CONFIG_MINIMAL_RUNTIME` | **`true`** | n/a |
+| `minimalRuntime` | `PRISMA_PY_CONFIG_MINIMAL_RUNTIME` | `false` | n/a |
 | `scalarFieldsOnly` | `PRISMA_PY_CONFIG_SCALAR_FIELDS_ONLY` | `false` | n/a |
 | `separateModelFiles` | `PRISMA_PY_CONFIG_SEPARATE_MODEL_FILES` | `false` | n/a |
 | `recursiveValidationModels` | `PRISMA_PY_CONFIG_RECURSIVE_VALIDATION_MODELS` | `false` | n/a |
 
-> The one default that changes behavior on upgrade is **`minimalRuntime`, which is on
-> by default.** Everything else is opt-in. To reproduce upstream output exactly, set
-> `minimalRuntime = false` (see [Rollback](#rollback)).
+> **All options are opt-in (off by default), so installing the fork and regenerating
+> reproduces upstream output exactly.** Enable the options below as needed.
 
 ## Step-by-step
 
@@ -44,7 +43,7 @@ See [`benchmarks/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/de
    > `claude/eager-hamilton-7a4gge` branch; once it lands on `develop`, install that.
    > It also **requires Pydantic v2**.
 
-2. **Regenerate the client** — no schema change is required to get `minimalRuntime`:
+2. **Regenerate the client** — output is upstream-equivalent until you enable an option:
 
    ```bash
    python -m prisma generate
@@ -54,11 +53,11 @@ See [`benchmarks/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/de
    visible difference (see [Type checking](#type-checking)). If anything looks off,
    jump to [Rollback](#rollback).
 
-That's it for the default win. To go further, enable the opt-in options below.
+Nothing changes by default. Enable the opt-in options below as your schema needs them.
 
 ## The optimizations
 
-### `minimalRuntime` (default: on)
+### `minimalRuntime` (default: off)
 
 Splits each heavy generated module into a `.pyi` stub with the **full** types (what your
 type checker reads) and a slim `.py` with a minimal runtime. The recursive query-argument
@@ -143,7 +142,7 @@ already fails to import for you. Smaller schemas don't need it (default off).
 generator client {
   provider         = "prisma-client-py"
   interface        = "asyncio"
-  minimalRuntime   = true   # on by default; shown for clarity
+  minimalRuntime   = true   # opt-in; the biggest size/import win
   scalarFieldsOnly = false  # turn on only if you don't read relations off instances
 }
 ```

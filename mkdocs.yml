@@ -56,6 +56,7 @@ nav:
       - Quick Start: getting_started/quickstart.md
       - Advanced Usage: getting_started/advanced.md
       - Partial Types: getting_started/partial-types.md
+      - Migrating from Upstream: migrating-from-upstream.md
   - Reference:
       - Query Operations: reference/operations.md
       - Client: reference/client.md

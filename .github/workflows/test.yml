@@ -44,14 +44,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install . -r pipelines/requirements/ci.txt
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('pipelines/requirements/*.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: .mypy_cache
           key: ${{ runner.os }}-mypy
@@ -76,10 +76,11 @@ jobs:
           TARGET_PYTHON: ${{ matrix.python-version }}
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: coverage-data
+          name: coverage-data-test-${{ strategy.job-index }}
           path: ".cache/.coverage.*"
+          include-hidden-files: true
 
   integration:
     name: integration (${{ matrix.name }})
@@ -104,7 +105,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install . -r pipelines/requirements/ci.txt
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('pipelines/requirements/*.txt') }}
@@ -138,7 +139,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install . -r pipelines/requirements/ci.txt
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('pipelines/requirements/*.txt') }}
@@ -173,7 +174,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -U . -r pipelines/requirements/ci.txt
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('pipelines/requirements/*.txt') }}
@@ -211,14 +212,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -U . -r pipelines/requirements/ci.txt
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('pipelines/requirements/*.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: .mypy_cache
           key: ${{ runner.os }}-mypy
@@ -298,7 +299,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -U . -r pipelines/requirements/ci.txt
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('pipelines/requirements/*.txt') }}
@@ -347,10 +348,11 @@ jobs:
           COVERAGE_FILE: .cache/.coverage.databases
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: coverage-data
+          name: coverage-data-db-${{ strategy.job-index }}
           path: ".cache/.coverage*"
+          include-hidden-files: true
 
   coverage:
     name: coverage
@@ -370,9 +372,10 @@ jobs:
           pip install -U . -r pipelines/requirements/ci.txt
 
       - name: Download coverage data.
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          name: coverage-data
+          pattern: coverage-data-*
+          merge-multiple: true
           path: .cache/
 
       - name: Check coverage requirements
@@ -381,7 +384,7 @@ jobs:
 
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: htmlcov
           path: htmlcov
@@ -392,9 +395,9 @@ jobs:
           nox -s push-coverage
 
       # delete the temporary coverage artifacts to save on unnecessary cloud storage usage
-      - uses: geekyeggo/delete-artifact@v2
+      - uses: geekyeggo/delete-artifact@v5
         with:
-          name: coverage-data
+          name: coverage-data-*
 
   docker:
     name: docker
