@@ -19,7 +19,8 @@ SCALAR_FIELDS = """\
 """
 
 
-def build_schema(num_models: int, output: str, interface: str = "asyncio") -> str:
+def build_schema(num_models: int, output: str, interface: str = "asyncio",
+                 recursive_type_depth: int = 5) -> str:
     lines: list[str] = [
         "datasource db {",
         '  provider = "sqlite"',
@@ -30,7 +31,7 @@ def build_schema(num_models: int, output: str, interface: str = "asyncio") -> st
         '  provider             = "prisma-client-py"',
         f'  interface            = "{interface}"',
         f'  output               = "{output}"',
-        "  recursive_type_depth = 5",
+        f"  recursive_type_depth = {recursive_type_depth}",
         "}",
         "",
     ]
@@ -60,9 +61,11 @@ def main() -> None:
     parser.add_argument("--output", required=True, help="generator output dir (the prisma package path)")
     parser.add_argument("--schema", required=True, help="where to write the .prisma file")
     parser.add_argument("--interface", default="asyncio")
+    parser.add_argument("--recursive-type-depth", type=int, default=5,
+                        help="generator recursive_type_depth (-1 = true recursive types, Pyright only)")
     args = parser.parse_args()
 
-    schema = build_schema(args.models, args.output, args.interface)
+    schema = build_schema(args.models, args.output, args.interface, args.recursive_type_depth)
     Path(args.schema).parent.mkdir(parents=True, exist_ok=True)
     Path(args.schema).write_text(schema)
     print(f"Wrote schema with {args.models} models -> {args.schema}")

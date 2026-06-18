@@ -51,10 +51,11 @@ class VariantResult:
 # --------------------------------------------------------------------------- #
 # generation
 # --------------------------------------------------------------------------- #
-def write_schema(models: int, output_pkg: str, schema_path: Path) -> None:
+def write_schema(models: int, output_pkg: str, schema_path: Path, recursive_type_depth: int) -> None:
     subprocess.run(
         [sys.executable, str(HERE / "gen_schema.py"),
-         "--models", str(models), "--output", output_pkg, "--schema", str(schema_path)],
+         "--models", str(models), "--output", output_pkg, "--schema", str(schema_path),
+         "--recursive-type-depth", str(recursive_type_depth)],
         check=True, capture_output=True, text=True,
     )
 
@@ -145,7 +146,8 @@ def measure_sizes(pkg_dir: Path) -> tuple[float, dict[str, float]]:
 # variants
 # --------------------------------------------------------------------------- #
 def run_variant(label: str, python: str, flags: dict[str, str],
-                models: int, workdir: Path, repeats: int) -> VariantResult:
+                models: int, workdir: Path, repeats: int,
+                recursive_type_depth: int) -> VariantResult:
     res = VariantResult(label=label, python=python, flags=flags)
     out_root = workdir / label
     if out_root.exists():
@@ -155,7 +157,7 @@ def run_variant(label: str, python: str, flags: dict[str, str],
     out_root.mkdir(parents=True, exist_ok=True)
 
     try:
-        write_schema(models, str(pkg_dir), schema_path)
+        write_schema(models, str(pkg_dir), schema_path, recursive_type_depth)
         generate(python, schema_path, flags)
         res.generate_ok = True
     except subprocess.CalledProcessError as exc:
@@ -199,6 +201,9 @@ def main() -> None:
     parser.add_argument("--models", type=int, default=50)
     parser.add_argument("--mode", choices=["flags", "upstream", "both"], default="flags")
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--recursive-type-depth", type=int, default=5,
+                        help="generator recursive_type_depth applied to every variant "
+                             "(-1 = true recursive types, the maintainer's Pyright-only workaround)")
     parser.add_argument("--upstream-version", default="0.15.0")
     parser.add_argument("--separate-model-files", action="store_true",
                         help="also enable separate_model_files in the optimized variant")
@@ -221,25 +226,27 @@ def main() -> None:
         variants.append((f"upstream-{args.upstream_version}", upstream_py, {}))
     variants.append(("fork-optimized", sys.executable, opt_flags))
 
-    print(f"\nBenchmark: {args.models} models, {args.repeats} repeats, mode={args.mode}\n")
+    print(f"\nBenchmark: {args.models} models, {args.repeats} repeats, mode={args.mode}, "
+          f"recursive_type_depth={args.recursive_type_depth}\n")
     results: list[VariantResult] = []
     for label, python, flags in variants:
         print(f"  running {label} ...", flush=True)
-        results.append(run_variant(label, python, flags, args.models, workdir, args.repeats))
+        results.append(run_variant(label, python, flags, args.models, workdir,
+                                   args.repeats, args.recursive_type_depth))
 
-    print_report(results, args.models)
+    print_report(results, args.models, args.recursive_type_depth)
 
     if args.json:
         Path(args.json).write_text(json.dumps([asdict(r) for r in results], indent=2))
         print(f"\nRaw results -> {args.json}")
 
 
-def print_report(results: list[VariantResult], models: int) -> None:
+def print_report(results: list[VariantResult], models: int, recursive_type_depth: int) -> None:
     ok = [r for r in results if r.generate_ok]
     failed = [r for r in results if not r.generate_ok]
 
     print("\n" + "=" * 78)
-    print(f"RESULTS  ({models} models)")
+    print(f"RESULTS  ({models} models, recursive_type_depth={recursive_type_depth})")
     print("=" * 78)
     header = f"{'variant':<22}{'import (ms)':>13}{'peak RSS (MB)':>16}{'runtime .py (KB)':>18}"
     print(header)

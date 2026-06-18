@@ -31,7 +31,22 @@ python benchmarks/run.py --models 100 --mode both --separate-model-files --json 
 ```
 
 Options: `--models N`, `--mode {flags,upstream,both}`, `--repeats N`,
-`--upstream-version 0.15.0`, `--separate-model-files`, `--workdir DIR`, `--json PATH`.
+`--recursive-type-depth N`, `--upstream-version 0.15.0`, `--separate-model-files`,
+`--workdir DIR`, `--json PATH`.
+
+### Recursive type depth
+
+`--recursive-type-depth` (default `5`) is applied to every variant. The amount of
+generated type bloat is dominated by this setting, so it's the key axis to vary:
+
+- `5` (default) — the bloat is large enough that at ~100 models the **un-optimized**
+  client becomes *unimportable* (Pydantic `RecursionError`).
+- `-1` — "true recursive types", the maintainer's recommended workaround for large
+  schemas (Pyright only; see upstream discussion #867). This shrinks the baseline a lot,
+  so it's the fairest comparison for *"does the fork still help on top of the official
+  advice?"* — and it does, just more modestly.
+
+Example: `python benchmarks/run.py --models 50 --mode both --recursive-type-depth -1`
 
 ### Two baselining modes
 
