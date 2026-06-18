@@ -530,6 +530,16 @@ class Config(BaseSettings):
         alias='scalarFieldsOnly',
         description='Skip relationship fields in models to avoid circular validation and reduce memory',
     )
+    recursive_validation_models: bool = FieldInfo(
+        default=False,
+        env='PRISMA_PY_CONFIG_RECURSIVE_VALIDATION_MODELS',
+        alias='recursiveValidationModels',
+        description=(
+            'Generate true-recursive, lazily-built (defer_build) Pydantic v2 models so '
+            'large/deep schemas keep full runtime validation without exploding memory or '
+            'crashing on import. Requires Pydantic v2.'
+        ),
+    )
 
     # this seems to be the only good method for setting the contextvar as
     # we don't control the actual construction of the object like we do for
@@ -607,6 +617,17 @@ class Config(BaseSettings):
         if scalar_fields_only is not None:
             values['scalar_fields_only'] = scalar_fields_only
             values.pop('scalarFieldsOnly', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_recursive_validation_models(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        recursive_validation_models = values.get('recursiveValidationModels')
+        if recursive_validation_models is not None:
+            values['recursive_validation_models'] = recursive_validation_models
+            values.pop('recursiveValidationModels', None)
 
         return values
 

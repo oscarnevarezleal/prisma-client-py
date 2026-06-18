@@ -223,7 +223,21 @@ _{{ model.name }}_fields: Dict['types.{{ model.name }}Keys', PartialModelField] 
 # e.g. models.Post
 from . import models, actions
 
+{% if recursive_validation_models is defined and recursive_validation_models %}
+# recursive_validation_models: models are `defer_build=True`, so their validators are
+# compiled lazily on first use rather than eagerly here. Compiling a chain of related
+# models recurses ~14 Python stack frames per relation level, so raise the recursion
+# limit to comfortably cover the schema's worst case (bounded by the model count).
+# See docs/contributing/recursive-validation-models.md.
+import sys as _sys
+_RECURSION_HEADROOM = 2000
+_RECURSION_PER_LEVEL = 14
+_REQUIRED_RECURSION_LIMIT = _RECURSION_PER_LEVEL * {{ dmmf.datamodel.models | length }} + _RECURSION_HEADROOM
+if _sys.getrecursionlimit() < _REQUIRED_RECURSION_LIMIT:
+    _sys.setrecursionlimit(_REQUIRED_RECURSION_LIMIT)
+{% else %}
 # required to support relationships between models
 {% for model in dmmf.datamodel.models %}
 model_rebuild({{ model.name }})
 {% endfor %}
+{% endif %}

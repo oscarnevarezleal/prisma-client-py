@@ -21,6 +21,11 @@ class _PrismaModel(BaseModel):
             use_enum_values=True,
             arbitrary_types_allowed=True,
             populate_by_name=True,
+            {% if recursive_validation_models is defined and recursive_validation_models %}
+            # Build each model's validator lazily on first use instead of at import,
+            # so large/deep schemas don't pay (or crash) building every model up front.
+            defer_build=True,
+            {% endif %}
         )
     elif not TYPE_CHECKING:
         from ._compat import BaseConfig
