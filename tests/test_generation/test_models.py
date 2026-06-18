@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 from pathlib import Path
 
 import pytest
@@ -81,7 +82,9 @@ def test_recursive_validation_models_option() -> None:
     )
 
 
-def _model(name: str, *relation_targets: str) -> SimpleNamespace:
+def _model(name: str, *relation_targets: str) -> Any:
+    # lightweight stand-in for generator.models.Model (only the attributes
+    # max_relation_chain_depth reads); typed as Any so it satisfies List[Model].
     fields = [SimpleNamespace(relation_name='r', type=target) for target in relation_targets]
     return SimpleNamespace(name=name, all_fields=fields)
 

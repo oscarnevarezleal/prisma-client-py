@@ -99,9 +99,20 @@ def ensure_built(model: Type['BaseModel'], max_relation_depth: int) -> None:
     try:
         run_with_recursion_headroom(_build, max_relation_depth)
     except RecursionError as exc:
-        raise RecursionError(
-            f'Building the validator for {model.__name__!r} exceeded the recursion '
-            f'limit while resolving related models (estimated relation depth '
-            f'{max_relation_depth}). If your schema has a deeper relation chain, '
-            f'raise the limit with `sys.setrecursionlimit(...)` before first use.'
-        ) from exc
+        raise RecursionError(_limit_message(model, max_relation_depth)) from exc
+    except Exception as exc:
+        # Older pydantic-core (e.g. 2.8) surfaces a too-deep recursive build as its
+        # own ``SchemaError`` ("recursion_loop") rather than a Python RecursionError;
+        # normalise both to RecursionError so callers handle them uniformly.
+        if type(exc).__name__ == 'SchemaError' and 'recursion' in str(exc).lower():
+            raise RecursionError(_limit_message(model, max_relation_depth)) from exc
+        raise
+
+
+def _limit_message(model: Type['BaseModel'], max_relation_depth: int) -> str:
+    return (
+        f'Building the validator for {model.__name__!r} exceeded the recursion '
+        f'limit while resolving related models (estimated relation depth '
+        f'{max_relation_depth}). If your schema has a deeper relation chain, '
+        f'raise the limit with `sys.setrecursionlimit(...)` before first use.'
+    )
