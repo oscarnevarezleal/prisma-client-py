@@ -13,7 +13,7 @@ chokes on a huge `types.py`).
 paths (`from prisma import Prisma`, `from prisma.models import User`) are identical.
 What changes is how the client is *generated*.
 
-See [`benchmarks/`](../benchmarks/README.md) for the numbers behind the claims below.
+See [`benchmarks/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks) for the numbers behind the claims below.
 
 ## What's different at a glance
 
@@ -198,5 +198,5 @@ python benchmarks/run.py --models <n> --mode flags
 python benchmarks/run.py --models <n> --mode both --recursive-type-depth -1
 ```
 
-See [`benchmarks/README.md`](../benchmarks/README.md) for how the harness works and the
+See [`benchmarks/README.md`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks/README.md) for how the harness works and the
 representative results matrix.

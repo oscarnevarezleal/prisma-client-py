@@ -7,7 +7,7 @@ import logging
 import inspect
 import warnings
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any, Dict, Optional, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Dict, Set, Optional, Iterable, Mapping
 
 from pydantic import BaseModel, Field
 
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from .. import models
 
 log: logging.Logger = logging.getLogger(__name__)
-_created_partial_types: set[str] = set()
+_created_partial_types: Set[str] = set()
 
 
 class {{ model.name }}(bases.Base{{ model.name }}):

@@ -1,8 +1,10 @@
 # Recursive validation models (design note)
 
-This is an internal design note for a planned generator option that solves the
-large-schema memory/startup problem **without giving up runtime validation**. It
-records the analysis and the spikes that de-risked it. It is not yet implemented.
+This is the design note for the `recursiveValidationModels` generator option, which
+solves the large-schema memory/startup problem **without giving up runtime
+validation**. It records the analysis and the spikes that de-risked it. The option
+is now available (flag-gated, off by default, Pydantic v2 only); this page is kept as
+the design rationale behind it.
 
 ## The problem
 
@@ -74,7 +76,7 @@ limit. Python's default is 1000, which is why deep schemas crash.
 schema's **maximum relation-chain depth `D`** at generation time — can emit a precise,
 **bounded** limit instead of a blanket value:
 
-```
+```text
 limit = ceil(frames_per_level × D × SAFETY) + HEADROOM
 ```
 
@@ -87,7 +89,7 @@ Captured by forcing the build to overflow and grabbing the stack. To compile
 `Model_i`, Pydantic processes its `next: Optional[Model_{i+1}]` field and recurses
 into compiling `Model_{i+1}`:
 
-```
+```text
 _generate_schema.py  _model_schema              # build this model's schema
 _fields.py           rebuild_model_fields       # walk its fields
 _fields.py           _recreate_field_info
@@ -122,9 +124,11 @@ enlarged-stack thread protects it too.
 
 ## Status
 
-De-risked by two spikes (`benchmarks/spike_recursive_models.py` and
+Implemented as the flag-gated `recursiveValidationModels` option (off by default,
+Pydantic v2 only): it emits `defer_build` models, drops the eager rebuild, derives the
+recursion limit from the schema's longest relation chain, and performs the lazy build
+inside a stack-enlarged thread (`prisma/_recursive.py`). It was de-risked first by two
+spikes (`benchmarks/spike_recursive_models.py` and
 `benchmarks/spike_nested_and_recursion_policy.py`); see
 [`benchmarks/README.md`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks)
-for how to reproduce. Not yet wired into the generator. Intended shape: a flag-gated
-option (e.g. `recursiveValidationModels = true`) that emits `defer_build` models,
-drops the eager rebuild, and applies the derived limit + threaded build.
+for how to reproduce.

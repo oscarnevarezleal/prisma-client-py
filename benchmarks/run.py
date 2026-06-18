@@ -73,8 +73,12 @@ def generate(python: str, schema_path: Path, flags: dict[str, str]) -> None:
     # NB: do NOT resolve() — a venv python is a symlink to the system python, and
     # resolving it would point bin_dir at the system bin/ (the wrong generator).
     bin_dir = str(Path(python).absolute().parent)
+    # Scrub ambient PRISMA_PY_CONFIG_* so a value set in the caller's shell can't
+    # leak into a variant run and skew the comparison (especially upstream, whose
+    # flags are {}).
+    base_env = {k: v for k, v in os.environ.items() if not k.startswith("PRISMA_PY_CONFIG_")}
     env = {
-        **os.environ,
+        **base_env,
         "PRISMA_PY_DEBUG_GENERATOR": "1",
         "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
         **flags,
@@ -93,10 +97,13 @@ class ChildImportError(RuntimeError):
 
 
 def _run_child(python: str, parent: str, mods: str) -> dict:
-    out = subprocess.run(
-        [python, str(HERE / "_child.py"), parent, mods],
-        capture_output=True, text=True,
-    )
+    try:
+        out = subprocess.run(
+            [python, str(HERE / "_child.py"), parent, mods],
+            capture_output=True, text=True, timeout=180,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ChildImportError(f"child import timed out after {exc.timeout}s") from exc
     if out.returncode != 0:
         # surface the last meaningful line (e.g. "RecursionError: ...")
         tail = (out.stderr or out.stdout).strip().splitlines()
