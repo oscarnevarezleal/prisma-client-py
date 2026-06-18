@@ -263,7 +263,9 @@ class Generator(GenericGenerator[PythonData]):
                 for model in data.dmmf.datamodel.models:
                     model_params = {**params, 'model': model, 'annotations': True}
                     model_file_name = f'models/_{model.name.lower()}.py'
-                    render_template(models_dir.parent, 'models/_model.py.jinja', model_params, output_name=model_file_name)
+                    render_template(
+                        models_dir.parent, 'models/_model.py.jinja', model_params, output_name=model_file_name
+                    )
 
             # Generate all other templates
             for name in DEFAULT_ENV.list_templates():
@@ -293,6 +295,7 @@ class Generator(GenericGenerator[PythonData]):
                 log.debug('Generating partial types')
                 # Invalidate Python's import cache so newly generated model files can be found
                 import importlib
+
                 importlib.invalidate_caches()
                 config.partial_type_generator.run()
 
@@ -340,7 +343,7 @@ def _strip_docstrings(code: str) -> str:
 
         # Check if next non-empty line after the docstring starts with def, class, @, or is dedented
         # If so, we need to add 'pass' to avoid empty function body
-        remaining = code[match.end():]
+        remaining = code[match.end() :]
         next_line_match = re.match(r'(\s*)([@\w])', remaining)
 
         if next_line_match:
@@ -352,7 +355,7 @@ def _strip_docstrings(code: str) -> str:
                 return before + 'pass' + after
 
         # Otherwise, just remove the docstring
-        return before[:-len(before.lstrip('\n'))] + before.lstrip('\n') if before.strip() else after
+        return before[: -len(before.lstrip('\n'))] + before.lstrip('\n') if before.strip() else after
 
     result = re.sub(pattern, replacer, code)
 
@@ -379,14 +382,19 @@ def render_template(
     # step adds the necessary newlines back.
     if name == 'models/__init__.py.jinja':
         import re
+
         # Fix the comment line followed by first import
-        output = re.sub(r'(# Import individual model files for type checking)    (from \.)',
-                       r'\1\n    \2', output)
+        output = re.sub(r'(# Import individual model files for type checking)    (from \.)', r'\1\n    \2', output)
         # Fix all subsequent imports that are on the same line
         output = re.sub(r'(import [A-Za-z0-9_]+)    (from \.)', r'\1\n    \2', output)
 
     # Strip docstrings from minimal runtime if enabled
-    if params.get('minimal_runtime') and name in ('actions.py.jinja', 'models.py.jinja', 'client.py.jinja', 'models/_model.py.jinja'):
+    if params.get('minimal_runtime') and name in (
+        'actions.py.jinja',
+        'models.py.jinja',
+        'client.py.jinja',
+        'models/_model.py.jinja',
+    ):
         output = _strip_docstrings(output)
 
     # Use custom output name if provided, otherwise resolve from template name

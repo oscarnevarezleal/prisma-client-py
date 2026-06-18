@@ -1,5 +1,6 @@
 """Tests for prisma._recursive, the runtime support for the
 ``recursiveValidationModels`` generator option (Pydantic v2 only)."""
+
 import sys
 import importlib
 from pathlib import Path

@@ -1,5 +1,5 @@
 """Tests for separate_model_files configuration option."""
-import os
+
 import sys
 from pathlib import Path
 
@@ -16,13 +16,13 @@ def test_separate_model_files_lazy_loading():
 
     # Check that individual model files exist
     init_file = models_dir / '__init__.py'
-    assert init_file.exists(), "models/__init__.py should exist"
+    assert init_file.exists(), 'models/__init__.py should exist'
 
     # Verify __init__.py contains lazy loading code
     init_content = init_file.read_text()
-    assert '__getattr__' in init_content, "Should have __getattr__ for lazy loading"
-    assert '_model_cache' in init_content, "Should have model cache"
-    assert '__all__' in init_content, "Should have __all__ list"
+    assert '__getattr__' in init_content, 'Should have __getattr__ for lazy loading'
+    assert '_model_cache' in init_content, 'Should have model cache'
+    assert '__all__' in init_content, 'Should have __all__ list'
 
 
 def test_model_import_syntax():
@@ -32,11 +32,11 @@ def test_model_import_syntax():
         from prisma.models import User  # type: ignore
 
         # Model should be a class
-        assert isinstance(User, type), "User should be a class"
+        assert isinstance(User, type), 'User should be a class'
 
         # Model should have expected attributes
-        assert hasattr(User, 'prisma'), "User should have prisma() method"
-        assert hasattr(User, 'create_partial'), "User should have create_partial() method"
+        assert hasattr(User, 'prisma'), 'User should have prisma() method'
+        assert hasattr(User, 'create_partial'), 'User should have create_partial() method'
 
     except ImportError:
         # Skip if prisma client not generated
@@ -45,7 +45,6 @@ def test_model_import_syntax():
 
 def test_lazy_loading_performance():
     """Test that lazy loading reduces initial import time."""
-    import importlib
     import time
 
     try:
@@ -56,11 +55,12 @@ def test_lazy_loading_performance():
         # Time the import
         start = time.time()
         import prisma.models  # type: ignore  # noqa: F401
+
         import_time = time.time() - start
 
         # Import should be fast (< 100ms) with lazy loading
         # Without lazy loading, it could be 500ms+ for large schemas
-        assert import_time < 0.5, f"Import took {import_time}s, should be faster with lazy loading"
+        assert import_time < 0.5, f'Import took {import_time}s, should be faster with lazy loading'
 
     except ImportError:
         # Skip if prisma client not generated
@@ -86,7 +86,7 @@ def test_forward_references():
     except Exception as e:
         # If we get a forward reference error, the test should fail
         if 'forward reference' in str(e).lower():
-            raise AssertionError(f"Forward references not resolved: {e}")
+            raise AssertionError(f'Forward references not resolved: {e}') from e
         # Other errors (like missing fields) are okay for this test
         pass
 
@@ -113,11 +113,13 @@ def test_model_cache():
         # Check if cache exists (only for separate model files)
         if hasattr(models_module, '_model_cache'):
             # Import a model twice
-            from prisma.models import User as User1  # type: ignore
-            from prisma.models import User as User2  # type: ignore
+            from prisma.models import (
+                User as User1,  # type: ignore
+                User as User2,  # type: ignore
+            )
 
             # Should be the same object (cached)
-            assert User1 is User2, "Models should be cached"
+            assert User1 is User2, 'Models should be cached'
 
     except ImportError:
         # Skip if prisma client not generated
@@ -135,7 +137,7 @@ def test_rebuilding_flag():
             from prisma.models import User  # type: ignore  # noqa: F401
 
             # After import, rebuilding should be False
-            assert not models_module._rebuilding, "Rebuilding flag should be False after import"
+            assert not models_module._rebuilding, 'Rebuilding flag should be False after import'
 
     except ImportError:
         # Skip if prisma client not generated

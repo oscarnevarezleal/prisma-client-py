@@ -15,6 +15,7 @@ chain, so:
 * the limit is raised lazily (on first use) rather than as an import side effect;
 * it runs once per model and is cached by Pydantic (``__pydantic_complete__``).
 """
+
 from __future__ import annotations
 
 import sys

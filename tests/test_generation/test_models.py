@@ -1,5 +1,5 @@
-from pathlib import Path
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError

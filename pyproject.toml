@@ -2,7 +2,7 @@
 line-length = 120
 output-format = "grouped"
 target-version = "py37"
-extend-exclude = ["typesafety/**.py", "src/prisma/_vendor/**.py"]
+extend-exclude = ["typesafety/**.py", "src/prisma/_vendor/**.py", "benchmarks/**.py"]
 
 [tool.ruff.lint]
 select = [
