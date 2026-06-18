@@ -39,7 +39,9 @@ class VariantResult:
     python: str
     flags: dict[str, str]
     generate_ok: bool = False
+    import_ok: bool = False
     error: str = ""
+    import_error: str = ""
     import_time_s: float = 0.0
     peak_rss_delta_mb: float = 0.0
     size_total_kb: float = 0.0
@@ -85,11 +87,20 @@ def generate(python: str, schema_path: Path, flags: dict[str, str]) -> None:
 # --------------------------------------------------------------------------- #
 # measurement
 # --------------------------------------------------------------------------- #
+class ChildImportError(RuntimeError):
+    pass
+
+
 def _run_child(python: str, parent: str, mods: str) -> dict:
     out = subprocess.run(
         [python, str(HERE / "_child.py"), parent, mods],
-        check=True, capture_output=True, text=True,
+        capture_output=True, text=True,
     )
+    if out.returncode != 0:
+        # surface the last meaningful line (e.g. "RecursionError: ...")
+        tail = (out.stderr or out.stdout).strip().splitlines()
+        msg = next((ln for ln in reversed(tail) if ln.strip() and not ln.startswith(" ")), "")
+        raise ChildImportError(msg or "child import failed")
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
@@ -152,7 +163,13 @@ def run_variant(label: str, python: str, flags: dict[str, str],
         return res
 
     res.size_total_kb, res.size_breakdown_kb = measure_sizes(pkg_dir)
-    res.import_time_s, res.peak_rss_delta_mb = measure_runtime(python, out_root, repeats)
+    try:
+        res.import_time_s, res.peak_rss_delta_mb = measure_runtime(python, out_root, repeats)
+        res.import_ok = True
+    except ChildImportError as exc:
+        # e.g. the un-optimized client is too deeply nested to import at scale
+        # (Pydantic RecursionError). Keep the size metrics; flag the runtime ones.
+        res.import_error = str(exc)
     return res
 
 
@@ -228,7 +245,16 @@ def print_report(results: list[VariantResult], models: int) -> None:
     print(header)
     print("-" * 78)
     for r in ok:
-        print(f"{r.label:<22}{r.import_time_s * 1000:>13.1f}{r.peak_rss_delta_mb:>16.1f}{r.size_total_kb:>18.1f}")
+        if r.import_ok:
+            imp = f"{r.import_time_s * 1000:>13.1f}"
+            rss = f"{r.peak_rss_delta_mb:>16.1f}"
+        else:
+            imp, rss = f"{'unimportable':>13}", f"{'-':>16}"
+        print(f"{r.label:<22}{imp}{rss}{r.size_total_kb:>18.1f}")
+
+    for r in ok:
+        if not r.import_ok:
+            print(f"  ! {r.label} could not be imported: {r.import_error}")
 
     # relative improvement vs the first successful "baseline-like" variant
     base = next((r for r in ok if "baseline" in r.label or "upstream" in r.label), None)
@@ -236,8 +262,12 @@ def print_report(results: list[VariantResult], models: int) -> None:
     if base and opt:
         print("-" * 78)
         print(f"\nImprovement  (fork-optimized vs {base.label}):")
-        _pct("import time", base.import_time_s, opt.import_time_s)
-        _pct("peak RSS", base.peak_rss_delta_mb, opt.peak_rss_delta_mb)
+        if base.import_ok and opt.import_ok:
+            _pct("import time", base.import_time_s, opt.import_time_s)
+            _pct("peak RSS", base.peak_rss_delta_mb, opt.peak_rss_delta_mb)
+        else:
+            print(f"  import time / peak RSS   n/a ({base.label} is unimportable at this scale;")
+            print(f"                           fork-optimized imports in {opt.import_time_s * 1000:.0f} ms)")
         _pct("runtime .py size", base.size_total_kb, opt.size_total_kb)
         print("\nPer-artifact size (KB):")
         keys = sorted({k for r in ok for k in r.size_breakdown_kb})
