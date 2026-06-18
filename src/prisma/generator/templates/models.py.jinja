@@ -225,17 +225,8 @@ from . import models, actions
 
 {% if recursive_validation_models is defined and recursive_validation_models %}
 # recursive_validation_models: models are `defer_build=True`, so their validators are
-# compiled lazily on first use rather than eagerly here. Compiling a chain of related
-# models recurses ~14 Python stack frames per relation level, so raise the recursion
-# limit to comfortably cover the schema's longest relation chain ({{ max_relation_depth }}).
-# See docs/contributing/recursive-validation-models.md.
-import sys as _sys
-_RECURSION_HEADROOM = 2000
-_RECURSION_PER_LEVEL = 14
-_MAX_RELATION_DEPTH = {{ max_relation_depth }}
-_REQUIRED_RECURSION_LIMIT = _RECURSION_PER_LEVEL * _MAX_RELATION_DEPTH + _RECURSION_HEADROOM
-if _sys.getrecursionlimit() < _REQUIRED_RECURSION_LIMIT:
-    _sys.setrecursionlimit(_REQUIRED_RECURSION_LIMIT)
+# compiled lazily and safely on first use (see bases._PrismaModel / prisma._recursive),
+# not eagerly here. Nothing to rebuild at import time.
 {% else %}
 # required to support relationships between models
 {% for model in dmmf.datamodel.models %}

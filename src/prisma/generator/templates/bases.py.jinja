@@ -15,6 +15,15 @@ if TYPE_CHECKING:
 _PrismaModelT = TypeVar('_PrismaModelT', bound='_PrismaModel')
 
 
+{% if recursive_validation_models is defined and recursive_validation_models %}
+from ._recursive import ensure_built as _ensure_built
+
+# longest relation chain in the schema; sizes the recursion limit / stack used
+# when a model's validator is compiled lazily on first use.
+_MAX_RELATION_DEPTH = {{ max_relation_depth }}
+{% endif %}
+
+
 class _PrismaModel(BaseModel):
     if PYDANTIC_V2:
         model_config: ClassVar[ConfigDict] = ConfigDict(
@@ -27,6 +36,26 @@ class _PrismaModel(BaseModel):
             defer_build=True,
             {% endif %}
         )
+
+    {% if recursive_validation_models is defined and recursive_validation_models %}
+    if PYDANTIC_V2 and not TYPE_CHECKING:
+        # Compile this model's (deferred) validator on first use, inside an
+        # enlarged-stack worker thread sized to the schema's relation depth, so
+        # deep schemas build safely instead of overflowing the C stack.
+        def __init__(__pydantic_self__, **data: Any) -> None:
+            _ensure_built(type(__pydantic_self__), _MAX_RELATION_DEPTH)
+            super().__init__(**data)
+
+        @classmethod
+        def model_validate(cls, *args: Any, **kwargs: Any) -> Any:
+            _ensure_built(cls, _MAX_RELATION_DEPTH)
+            return super().model_validate(*args, **kwargs)
+
+        @classmethod
+        def model_validate_json(cls, *args: Any, **kwargs: Any) -> Any:
+            _ensure_built(cls, _MAX_RELATION_DEPTH)
+            return super().model_validate_json(*args, **kwargs)
+    {% endif %}
     elif not TYPE_CHECKING:
         from ._compat import BaseConfig
 
