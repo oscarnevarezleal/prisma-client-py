@@ -34,14 +34,16 @@ ENV DOCKER_TARGETARCH=${TARGETARCH}
 RUN \
     if [[ $OS_DISTRO =~ alpine ]]; then \
       adduser -u ${PRISMA_USER_ID} -D prisma; \
-      apk add gcc musl-dev yaml-dev yaml libffi-dev git; \
+      # libatomic is required by the bundled Node binary that the Prisma CLI downloads
+      apk add gcc musl-dev yaml-dev yaml libffi-dev git libatomic; \
     elif bash -c "[[ ${OS_DISTRO} =~ slim ]]"; then \
       useradd --create-home --uid ${PRISMA_USER_ID} --shell /bin/bash prisma; \
       apt-get update; \
       apt-get install -y --no-install-recommends \
         git \
         ca-certificates \
-        apt-transport-https; \
+        apt-transport-https \
+        libatomic1; \
       # Cleanup to reduce image size
       apt-get clean; \
       rm -rf /var/lib/apt/lists/*; \

@@ -1,4 +1,6 @@
-httpx>=0.19.0
+# `httpx` 0.28 removed the `app=` shortcut that the `HttpConfig.app` passthrough
+# option relies on (see tests/test_client.py::test_custom_http_options).
+httpx>=0.19.0, <0.28
 jinja2>=2.11.2
 pydantic>=1.10.0, < 3
 click>=7.1.2, <8.2.0
