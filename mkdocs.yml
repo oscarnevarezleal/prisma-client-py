@@ -79,3 +79,4 @@ nav:
   - Contributing:
       - How to Contribute: contributing/contributing.md
       - Architecture: contributing/architecture.md
+      - Recursive Validation Models: contributing/recursive-validation-models.md
