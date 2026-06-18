@@ -231,11 +231,7 @@ class Generator(GenericGenerator[PythonData]):
     def generate(self, data: PythonData) -> None:
         config = data.generator.config
         rootdir = Path(data.generator.output.value)
-        
-        # Write a marker file to confirm this modified generator is running
-        marker_file = rootdir / 'GENERATOR_MARKER.txt'
-        marker_file.write_text(f'Modified generator ran at {rootdir}\nminimal_runtime={config.minimal_runtime}\nseparate_model_files={config.separate_model_files}')
-        
+
         if not rootdir.exists():
             rootdir.mkdir(parents=True, exist_ok=True)
 
@@ -258,7 +254,10 @@ class Generator(GenericGenerator[PythonData]):
                 models_dir.mkdir(exist_ok=True)
 
                 # Generate models/__init__.py
-                render_template(models_dir.parent, 'models/__init__.py.jinja', params)
+                # `annotations: True` makes the header emit `from __future__ import
+                # annotations`, keeping runtime-subscripted hints (e.g. dict[str, Any])
+                # valid on Python 3.8/3.9.
+                render_template(models_dir.parent, 'models/__init__.py.jinja', {**params, 'annotations': True})
 
                 # Generate individual model files
                 for model in data.dmmf.datamodel.models:
