@@ -5,7 +5,7 @@ from typing import Any, Dict, cast
 from pathlib import Path
 
 
-def test_separate_model_files_lazy_loading():
+def test_separate_model_files_lazy_loading() -> None:
     """Test that models are lazy-loaded when separate_model_files is enabled."""
     # This test assumes prisma generate was run with separate_model_files=true
     # Check if models directory exists
@@ -26,11 +26,11 @@ def test_separate_model_files_lazy_loading():
     assert '__all__' in init_content, 'Should have __all__ list'
 
 
-def test_model_import_syntax():
+def test_model_import_syntax() -> None:
     """Test that import syntax works the same with separate model files."""
     try:
         # This should work whether models are separate or not
-        from prisma.models import User  # type: ignore
+        from prisma.models import User
 
         # Model should be a class
         assert isinstance(User, type), 'User should be a class'
@@ -44,7 +44,7 @@ def test_model_import_syntax():
         pass
 
 
-def test_lazy_loading_performance():
+def test_lazy_loading_performance() -> None:
     """Test that lazy loading reduces initial import time."""
     import time
 
@@ -55,7 +55,7 @@ def test_lazy_loading_performance():
 
         # Time the import
         start = time.time()
-        import prisma.models  # type: ignore  # noqa: F401
+        import prisma.models  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
         import_time = time.time() - start
 
@@ -68,17 +68,17 @@ def test_lazy_loading_performance():
         pass
 
 
-def test_forward_references():
+def test_forward_references() -> None:
     """Test that forward references are resolved correctly."""
     try:
-        from prisma.models import User  # type: ignore
+        from prisma.models import User
 
         # Create an instance with relationships
         # This will trigger forward reference resolution
-        user_data: Dict[str, Any] = {'id': 1, 'name': 'Test User'}
+        user_data: Dict[str, Any] = {'id': '1', 'name': 'Test User'}
         user = User(**user_data)
 
-        assert user.id == 1
+        assert user.id == '1'
         assert user.name == 'Test User'
 
     except ImportError:
@@ -92,10 +92,10 @@ def test_forward_references():
         pass
 
 
-def test_partial_type_generator_compatibility():
+def test_partial_type_generator_compatibility() -> None:
     """Test that partial type generator works with separate model files."""
     try:
-        from prisma import partials  # type: ignore  # noqa: F401
+        from prisma import partials  # noqa: F401
 
         # If partials module exists, it should be importable
         # Partial types should work the same way
@@ -106,17 +106,17 @@ def test_partial_type_generator_compatibility():
         pass
 
 
-def test_model_cache():
+def test_model_cache() -> None:
     """Test that model cache works correctly."""
     try:
-        import prisma.models as models_module  # type: ignore
+        import prisma.models as models_module
 
         # Check if cache exists (only for separate model files)
         if hasattr(models_module, '_model_cache'):
             # Import a model twice
             from prisma.models import (
-                User as User1,  # type: ignore
-                User as User2,  # type: ignore
+                User as User1,
+                User as User2,
             )
 
             # Should be the same object (cached)
@@ -127,15 +127,15 @@ def test_model_cache():
         pass
 
 
-def test_rebuilding_flag():
+def test_rebuilding_flag() -> None:
     """Test that the rebuilding flag prevents recursion."""
     try:
-        import prisma.models as models_module  # type: ignore
+        import prisma.models as models_module
 
         # Check if rebuilding flag exists (only for separate model files)
         if hasattr(models_module, '_rebuilding'):
             # Import a model to trigger rebuild
-            from prisma.models import User  # type: ignore  # noqa: F401
+            from prisma.models import User  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
             # After import, rebuilding should be False
             assert not cast(Any, models_module)._rebuilding, 'Rebuilding flag should be False after import'

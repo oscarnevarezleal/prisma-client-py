@@ -77,7 +77,7 @@ def test_recursive_validation_models_option() -> None:
     assert Config(recursive_validation_models=True).recursive_validation_models is True
     # the schema passes the camelCase alias
     assert (
-        Config(recursiveValidationModels=True).recursive_validation_models  # type: ignore[call-arg]
+        Config(recursiveValidationModels=True).recursive_validation_models  # pyright: ignore[reportCallIssue]
         is True
     )
 

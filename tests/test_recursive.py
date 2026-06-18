@@ -74,11 +74,15 @@ def test_run_with_recursion_headroom_propagates_exceptions() -> None:
 def test_ensure_built_builds_and_validates(tmp_path: Path) -> None:
     mod = _make_chain_module(tmp_path, 5, 'rvm_basic')
 
-    # deferred -> not built until we ask
-    assert mod.M0.__pydantic_complete__ is False
+    # deferred -> not built until we ask. Read the flag into fresh locals so
+    # mypy doesn't carry the `is False` narrowing across `ensure_built` and
+    # mark the rest of the test unreachable.
+    complete_before = mod.M0.__pydantic_complete__
+    assert complete_before is False
 
     ensure_built(mod.M0, max_relation_depth=5)
-    assert mod.M0.__pydantic_complete__ is True
+    complete_after = mod.M0.__pydantic_complete__
+    assert complete_after is True
 
     # full validation, including nested relations
     inst = mod.M0.model_validate({'id': 1, 'nxt': {'id': 2, 'nxt': {'id': 3}}})
