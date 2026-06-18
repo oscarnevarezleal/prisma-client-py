@@ -3,6 +3,7 @@
 
 import sys
 import importlib
+from typing import Any, Iterator, cast
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,7 @@ pytestmark = pytest.mark.skipif(not PYDANTIC_V2, reason='recursiveValidationMode
 
 
 @pytest.fixture(autouse=True)
-def _restore_recursion_limit() -> object:
+def restore_recursion_limit() -> Iterator[None]:
     # run_with_recursion_headroom only ever *raises* the global recursion limit;
     # restore it after each test so the limit doesn't leak across tests.
     old = sys.getrecursionlimit()
@@ -26,7 +27,7 @@ def _restore_recursion_limit() -> object:
     sys.setrecursionlimit(old)
 
 
-def _make_chain_module(tmp_path: Path, n: int, name: str) -> object:
+def _make_chain_module(tmp_path: Path, n: int, name: str) -> Any:
     """Write and import a module of N chained, defer_build recursive models."""
     lines = [
         'from __future__ import annotations',
@@ -89,7 +90,8 @@ def test_ensure_built_builds_and_validates(tmp_path: Path) -> None:
     with pytest.raises(Exception) as exc:
         mod.M0.model_validate({'id': 1, 'nxt': {'id': 'not-an-int'}})
     assert exc.type.__name__ == 'ValidationError'
-    assert ('nxt', 'id') == exc.value.errors()[0]['loc']
+    errors = cast(Any, exc.value).errors()
+    assert ('nxt', 'id') == errors[0]['loc']
 
 
 def test_ensure_built_is_idempotent(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
 """Tests for separate_model_files configuration option."""
 
 import sys
+from typing import Any, Dict, cast
 from pathlib import Path
 
 
@@ -74,7 +75,7 @@ def test_forward_references():
 
         # Create an instance with relationships
         # This will trigger forward reference resolution
-        user_data = {'id': 1, 'name': 'Test User'}
+        user_data: Dict[str, Any] = {'id': 1, 'name': 'Test User'}
         user = User(**user_data)
 
         assert user.id == 1
@@ -137,7 +138,7 @@ def test_rebuilding_flag():
             from prisma.models import User  # type: ignore  # noqa: F401
 
             # After import, rebuilding should be False
-            assert not models_module._rebuilding, 'Rebuilding flag should be False after import'
+            assert not cast(Any, models_module)._rebuilding, 'Rebuilding flag should be False after import'
 
     except ImportError:
         # Skip if prisma client not generated
