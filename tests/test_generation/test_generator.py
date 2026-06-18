@@ -166,3 +166,23 @@ def test_schema_path_same_path(testdir: Testdir) -> None:
     proc = testdir.generate(output='.')
     assert proc.returncode == 0
     assert 'Generated Prisma Client Python' in proc.stdout.decode('utf-8')
+
+
+@pytest.mark.skipif(not PYDANTIC_V2, reason='recursiveValidationModels requires Pydantic v2')
+def test_recursive_validation_models_generation(testdir: Testdir) -> None:
+    """recursiveValidationModels emits defer_build models + lazy build hook and
+    skips the eager model_rebuild() loop; default (off) keeps the eager rebuild."""
+    # default (flag off): eager rebuild present, no defer_build
+    testdir.generate()
+    off_models = testdir.path.joinpath('prisma', 'models.py').read_text()
+    off_bases = testdir.path.joinpath('prisma', 'bases.py').read_text()
+    assert 'model_rebuild(' in off_models
+    assert 'defer_build' not in off_bases
+
+    # flag on: lazy build wiring present, eager rebuild gone
+    testdir.generate(options='recursiveValidationModels = true')
+    on_models = testdir.path.joinpath('prisma', 'models.py').read_text()
+    on_bases = testdir.path.joinpath('prisma', 'bases.py').read_text()
+    assert 'defer_build=True' in on_bases
+    assert '_ensure_built' in on_bases
+    assert 'model_rebuild(' not in on_models
