@@ -1,2 +1,4 @@
 -r test.txt
-pytest-mypy-plugins==3.1.2
+# 3.3.0 improves how mypy output paths are normalised back to `main`, which the
+# 3.1.2 release mishandled under the CI `.nox` working-directory layout.
+pytest-mypy-plugins==3.3.0

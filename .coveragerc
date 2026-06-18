@@ -1,6 +1,9 @@
 [run]
 branch = True
-concurrency = multiprocessing
+# `thread` is required alongside `multiprocessing` so coverage traces code that
+# runs in worker threads (e.g. prisma._recursive.run_with_recursion_headroom and
+# its tests); without it those lines show as uncovered.
+concurrency = multiprocessing, thread
 
 source =
     tests

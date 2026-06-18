@@ -6,6 +6,7 @@ import importlib
 from typing import (
     TYPE_CHECKING,
     Any,
+    Set,
     Dict,
     List,
     Type,
@@ -199,6 +200,51 @@ def format_documentation(doc: str, indent: int = 4) -> str:
     )
 
 
+def max_relation_chain_depth(models: List['Model']) -> int:
+    """Longest simple path through the relation graph (distinct models linked by
+    relations). This is how deep Pydantic recurses building a model's validator,
+    so it bounds the recursion limit the `recursive_validation_models` runtime
+    needs. Tight for common shapes (a linear chain -> N, a star/hub -> 2) and
+    always <= the model count, with a budgeted fallback to the model count for
+    pathologically dense graphs.
+    """
+    names = {m.name for m in models}
+    adj: Dict[str, Set[str]] = {}
+    for model in models:
+        targets: Set[str] = set()
+        for field in model.all_fields:
+            if field.relation_name and field.type in names and field.type != model.name:
+                targets.add(field.type)
+        adj[model.name] = targets
+
+    n = len(models)
+    if n <= 1:
+        return n
+
+    best = 1
+    budget = 200_000
+    for start in adj:
+        on_path = {start}
+        stack: List[Tuple[str, Iterator[str]]] = [(start, iter(sorted(adj[start])))]
+        while stack:
+            if len(stack) > best:
+                best = len(stack)
+            if best >= n:
+                return n  # cannot exceed n distinct nodes
+            _node, it = stack[-1]
+            for nxt in it:
+                if nxt not in on_path:
+                    budget -= 1
+                    on_path.add(nxt)
+                    stack.append((nxt, iter(sorted(adj[nxt]))))
+                    break
+            else:
+                on_path.discard(stack.pop()[0])
+            if budget <= 0:
+                return n  # dense graph: fall back to the safe upper bound
+    return best
+
+
 def _module_spec_serializer(spec: machinery.ModuleSpec) -> str:
     assert spec.origin is not None, 'Cannot serialize module with no origin'
     return spec.origin
@@ -354,6 +400,13 @@ class GenericData(GenericModel, Generic[ConfigT]):
         params = vars(self)
         params['type_schema'] = Schema.from_data(self)
         params['client_types'] = ClientTypes.from_data(self)
+        params['max_relation_depth'] = max_relation_chain_depth(self.dmmf.datamodel.models)
+
+        # Add config fields to params (including minimal_runtime)
+        config_vars = vars(self.generator.config)
+        for key, value in config_vars.items():
+            if key not in params:  # Don't override existing params
+                params[key] = value
 
         # add utility functions
         for func in [
@@ -508,6 +561,33 @@ class Config(BaseSettings):
     # https://github.com/prisma/prisma/issues/12442
     enable_experimental_decimal: bool = FieldInfo(default=False, env='PRISMA_PY_CONFIG_ENABLE_EXPERIMENTAL_DECIMAL')
 
+    minimal_runtime: bool = FieldInfo(
+        default=False,
+        env='PRISMA_PY_CONFIG_MINIMAL_RUNTIME',
+        alias='minimalRuntime',
+    )
+    separate_model_files: bool = FieldInfo(
+        default=False,
+        env='PRISMA_PY_CONFIG_SEPARATE_MODEL_FILES',
+        alias='separateModelFiles',
+    )
+    scalar_fields_only: bool = FieldInfo(
+        default=False,
+        env='PRISMA_PY_CONFIG_SCALAR_FIELDS_ONLY',
+        alias='scalarFieldsOnly',
+        description='Skip relationship fields in models to avoid circular validation and reduce memory',
+    )
+    recursive_validation_models: bool = FieldInfo(
+        default=False,
+        env='PRISMA_PY_CONFIG_RECURSIVE_VALIDATION_MODELS',
+        alias='recursiveValidationModels',
+        description=(
+            'Generate true-recursive, lazily-built (defer_build) Pydantic v2 models so '
+            'large/deep schemas keep full runtime validation without exploding memory or '
+            'crashing on import. Requires Pydantic v2.'
+        ),
+    )
+
     # this seems to be the only good method for setting the contextvar as
     # we don't control the actual construction of the object like we do for
     # the Data model.
@@ -551,6 +631,50 @@ class Config(BaseSettings):
         if engine_type is not None:
             values['engine_type'] = engine_type
             values.pop('engineType', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_minimal_runtime(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        minimal_runtime = values.get('minimalRuntime')
+        if minimal_runtime is not None:
+            values['minimal_runtime'] = minimal_runtime
+            values.pop('minimalRuntime', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_separate_model_files(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        separate_model_files = values.get('separateModelFiles')
+        if separate_model_files is not None:
+            values['separate_model_files'] = separate_model_files
+            values.pop('separateModelFiles', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_scalar_fields_only(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        scalar_fields_only = values.get('scalarFieldsOnly')
+        if scalar_fields_only is not None:
+            values['scalar_fields_only'] = scalar_fields_only
+            values.pop('scalarFieldsOnly', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_recursive_validation_models(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        recursive_validation_models = values.get('recursiveValidationModels')
+        if recursive_validation_models is not None:
+            values['recursive_validation_models'] = recursive_validation_models
+            values.pop('recursiveValidationModels', None)
 
         return values
 

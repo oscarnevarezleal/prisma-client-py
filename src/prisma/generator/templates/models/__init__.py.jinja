@@ -1,0 +1,114 @@
+{% include '_header.py.jinja' %}
+# -- template models/__init__.py.jinja --
+"""
+Lazy-loading models module.
+
+Each model is in its own file and loaded on-demand when accessed.
+This reduces memory usage for large schemas where only a subset of models are used.
+"""
+from typing import TYPE_CHECKING, Any
+
+# Declare all available models for import
+__all__ = [
+    {% for model in dmmf.datamodel.models -%}
+    '{{ model.name }}',
+    {% endfor -%}
+]
+
+# Cache for loaded models
+_model_cache: dict[str, Any] = {}
+# Track if we're currently rebuilding to prevent recursion
+_rebuilding: bool = False
+
+
+def _rebuild_models() -> None:
+    """Rebuild all loaded models to resolve forward references.
+
+    This is called after model access to ensure forward references are resolved.
+    Uses a global flag to prevent re-entry during rebuilding.
+    """
+    global _rebuilding
+
+    if _rebuilding:
+        return
+
+    import sys
+    import os
+
+    # Skip during generation
+    if os.environ.get('PRISMA_GENERATOR_INVOCATION'):
+        return
+
+    _rebuilding = True
+    try:
+        models_module = sys.modules[__name__]
+
+        # Get a snapshot of models to rebuild
+        models_to_rebuild = list(_model_cache.values())
+
+        # Rebuild each model
+        for model_class in models_to_rebuild:
+            try:
+                model_class.model_rebuild(_types_namespace={'models': models_module})
+            except Exception:
+                # If rebuild fails, Pydantic will resolve lazily
+                pass
+    finally:
+        _rebuilding = False
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy load model classes on first access.
+
+    Args:
+        name: The model class name to load
+
+    Returns:
+        The model class
+
+    Raises:
+        AttributeError: If the model doesn't exist
+    """
+    if name in _model_cache:
+        return _model_cache[name]
+
+    # Try to import the model from its file
+    try:
+        import importlib
+        import sys
+        import os
+
+        # Model files are named _<lowercase_model_name>.py
+        module_name = f'._{name.lower()}'
+        module = importlib.import_module(module_name, package=__name__)
+        model_class = getattr(module, name)
+
+        # Cache the model class
+        _model_cache[name] = model_class
+
+        # Rebuild models after loading to resolve forward references
+        # This is safe because the model is already cached, preventing recursion
+        import os
+        if not os.environ.get('PRISMA_GENERATOR_INVOCATION'):
+            _rebuild_models()
+
+        return model_class
+    except (ImportError, AttributeError) as e:
+        raise AttributeError(f"module '{__name__}' has no attribute '{name}'") from e
+
+
+def __dir__() -> list[str]:
+    """Return list of available model names."""
+    return [
+        {% for model in dmmf.datamodel.models -%}
+        '{{ model.name }}',
+        {% endfor -%}
+    ]
+
+
+# For type checking, import all models
+if TYPE_CHECKING:
+    # Import individual model files for type checking
+    {%- for model in dmmf.datamodel.models %}
+    from ._{{ model.name.lower() }} import {{ model.name }}
+    {%- endfor %}

@@ -1,25 +1,29 @@
 {% include '_header.py.jinja' %}
 {% from '_utils.py.jinja' import recursive_types with context %}
-# -- template models.py.jinja --
+# -- template models/_model.py.jinja --
+"""Model file for {{ model.name }}."""
 import os
 import logging
 import inspect
 import warnings
 from collections import OrderedDict
+from typing import TYPE_CHECKING, Any, Dict, Set, Optional, Iterable, Mapping
 
 from pydantic import BaseModel, Field
 
-from . import types, enums, errors, fields, bases
-from ._types import FuncType
-from ._compat import model_rebuild, field_validator
-from ._builder import serialize_base64
-from .generator import partial_models_ctx, PartialModelField
+from .. import types, enums, errors, fields, bases
+from .._types import FuncType
+from .._compat import model_rebuild, field_validator
+from .._builder import serialize_base64
+from ..generator import partial_models_ctx, PartialModelField
 
+if TYPE_CHECKING:
+    from .. import models
 
 log: logging.Logger = logging.getLogger(__name__)
 _created_partial_types: Set[str] = set()
 
-{% for model in dmmf.datamodel.models %}
+
 class {{ model.name }}(bases.Base{{ model.name }}):
     {% if model.documentation is none %}
     """Represents a {{ model.name }} record"""
@@ -27,7 +31,7 @@ class {{ model.name }}(bases.Base{{ model.name }}):
     """{{ format_documentation(model.documentation) }}"""
     {% endif %}
 
-    {% for field in model.all_fields %}
+    {% for field in model.all_fields -%}
     {# Skip relationship fields if scalar_fields_only is enabled #}
     {% if not (scalar_fields_only and field.relation_name) %}
     {{ field.name }}:
@@ -35,12 +39,12 @@ class {{ model.name }}(bases.Base{{ model.name }}):
                 {{ ' ' }}{{ field.python_type }}
             {% else -%}
                 {{ ' ' }}Optional[{{ field.python_type }}] = None
-            {% endif %}
-    {% if not field.documentation is none %}
+            {% endif -%}
+    {% if not field.documentation is none -%}
     """{{ format_documentation(field.documentation) }}"""
 
-    {% endif %}
-    {% endif %}
+    {% endif -%}
+    {% endif -%}
     {% endfor %}
 
     {% if not recursive_types %}
@@ -110,41 +114,41 @@ class {{ model.name }}(bases.Base{{ model.name }}):
                 'exclude_relational_fields and relations are mutually exclusive'
             )
 
-        fields: Dict['types.{{ model.name }}Keys', PartialModelField] = OrderedDict()
+        fields_dict: Dict['types.{{ model.name }}Keys', PartialModelField] = OrderedDict()
 
         try:
             if include:
                 for field in include:
-                    fields[field] = _{{ model.name }}_fields[field].copy()
+                    fields_dict[field] = _{{ model.name }}_fields[field].copy()
             elif exclude:
                 for field in exclude:
                     if field not in _{{ model.name }}_fields:
                         raise KeyError(field)
 
-                fields = {
+                fields_dict = {
                     key: data.copy()
                     for key, data in _{{ model.name }}_fields.items()
                     if key not in exclude
                 }
             else:
-                fields = {
+                fields_dict = {
                     key: data.copy()
                     for key, data in _{{ model.name }}_fields.items()
                 }
 
             if required:
                 for field in required:
-                    fields[field]['optional'] = False
+                    fields_dict[field]['optional'] = False
 
             if optional:
                 for field in optional:
-                    fields[field]['optional'] = True
+                    fields_dict[field]['optional'] = True
 
             {% if model.has_relational_fields %}
             if exclude_relational_fields:
-                fields = {
+                fields_dict = {
                     key: data
-                    for key, data in fields.items()
+                    for key, data in fields_dict.items()
                     if key not in _{{ model.name }}_relational_fields
                 }
             {% endif %}
@@ -165,7 +169,7 @@ class {{ model.name }}(bases.Base{{ model.name }}):
                         )
 
                     # TODO: support non prisma.partials models
-                    info = fields[field]
+                    info = fields_dict[field]
                     if info['is_list']:
                         info['type'] = f'List[\'partials.{type_}\']'
                     else:
@@ -182,24 +186,22 @@ class {{ model.name }}(bases.Base{{ model.name }}):
         models.append(
             {
                 'name': name,
-                'fields': cast(Mapping[str, PartialModelField], fields),
+                'fields': fields_dict,
                 'from_model': '{{ model.name }}',
             }
         )
         _created_partial_types.add(name)
 
 
-{% endfor %}
-
-{% for model in dmmf.datamodel.models %}
+# Field metadata for partial type generation
 {% if model.has_relational_fields -%}
-    _{{ model.name }}_relational_fields: Set[str] = {
-        {% for field in model.relational_fields %}
-        '{{ field.name }}',
-        {% endfor %}
-    }
+_{{ model.name }}_relational_fields: set[str] = {
+    {% for field in model.relational_fields %}
+    '{{ field.name }}',
+    {% endfor %}
+}
 {% else -%}
-    _{{ model.name }}_relational_fields: Set[str] = set()  # pyright: ignore[reportUnusedVariable]
+_{{ model.name }}_relational_fields: set[str] = set()
 {% endif %}
 _{{ model.name }}_fields: Dict['types.{{ model.name }}Keys', PartialModelField] = OrderedDict(
     [
@@ -216,20 +218,6 @@ _{{ model.name }}_fields: Dict['types.{{ model.name }}Keys', PartialModelField] 
     ],
 )
 
-{% endfor %}
 
-
-# we have to import ourselves as relation types are namespaced to models
-# e.g. models.Post
-from . import models, actions
-
-{% if recursive_validation_models is defined and recursive_validation_models %}
-# recursive_validation_models: models are `defer_build=True`, so their validators are
-# compiled lazily and safely on first use (see bases._PrismaModel / prisma._recursive),
-# not eagerly here. Nothing to rebuild at import time.
-{% else %}
-# required to support relationships between models
-{% for model in dmmf.datamodel.models %}
-model_rebuild({{ model.name }})
-{% endfor %}
-{% endif %}
+# Note: model_rebuild() is NOT called here to avoid circular imports
+# Models are rebuilt lazily when first accessed via __getattr__ in __init__.py

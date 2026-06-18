@@ -1,9 +1,9 @@
 import re
 import sys
-import subprocess
 import platform as _platform
-from functools import lru_cache
+import subprocess
 from typing import Tuple
+from functools import lru_cache
 
 
 def name() -> str:
