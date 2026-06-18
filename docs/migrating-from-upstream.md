@@ -22,6 +22,7 @@ See [`benchmarks/`](../benchmarks/README.md) for the numbers behind the claims b
 | `minimalRuntime` | `PRISMA_PY_CONFIG_MINIMAL_RUNTIME` | **`true`** | n/a |
 | `scalarFieldsOnly` | `PRISMA_PY_CONFIG_SCALAR_FIELDS_ONLY` | `false` | n/a |
 | `separateModelFiles` | `PRISMA_PY_CONFIG_SEPARATE_MODEL_FILES` | `false` | n/a |
+| `recursiveValidationModels` | `PRISMA_PY_CONFIG_RECURSIVE_VALIDATION_MODELS` | `false` | n/a |
 
 > The one default that changes behavior on upgrade is **`minimalRuntime`, which is on
 > by default.** Everything else is opt-in. To reproduce upstream output exactly, set
@@ -33,8 +34,15 @@ See [`benchmarks/`](../benchmarks/README.md) for the numbers behind the claims b
 
    ```bash
    pip uninstall prisma
+   # general optimizations:
    pip install "git+https://github.com/oscarnevarezleal/prisma-client-py.git@develop"
+   # to also get recursiveValidationModels (still on its feature branch):
+   pip install "git+https://github.com/oscarnevarezleal/prisma-client-py.git@claude/eager-hamilton-7a4gge"
    ```
+
+   > `recursiveValidationModels` currently lives on the
+   > `claude/eager-hamilton-7a4gge` branch; once it lands on `develop`, install that.
+   > It also **requires Pydantic v2**.
 
 2. **Regenerate the client** — no schema change is required to get `minimalRuntime`:
 
@@ -96,6 +104,39 @@ generator client {
 }
 ```
 
+### `recursiveValidationModels` (default: off, Pydantic v2 only)
+
+For **large or deeply-related schemas**, the record models in `models.py` are
+duplicated `recursive_type_depth` levels deep and all rebuilt eagerly at import. Past a
+point this makes `import prisma.models` slow, memory-heavy, or fail outright with
+`RecursionError: maximum recursion depth exceeded` — so the client can't even load.
+
+This option generates **true-recursive Pydantic v2 models** that are compiled **lazily on
+first use** (`defer_build=True`) instead of all at import:
+
+- **What you keep:** **full runtime validation**, including nested relations — invalid data
+  is still rejected with a precise location (e.g. `loc=('next','next','f_int')`). This is
+  not `scalarFieldsOnly`; relation fields are still present and validated.
+- **What changes:** the first time you use a given model, its validator is built (one-time,
+  ~tens to ~hundred ms for very deep chains, then cached). Memory scales with the models you
+  actually touch, not the schema size, and stays roughly flat.
+- **Safety:** the build runs in a worker thread with an enlarged stack sized to your schema's
+  longest relation chain, so deep schemas build safely; if the chain is deeper than estimated
+  you get a catchable `RecursionError` with guidance, never a segfault.
+- **Pairs with `minimalRuntime`:** they fix the two halves — `minimalRuntime` keeps `types.py`
+  from exploding, `recursiveValidationModels` keeps `models.py` from exploding.
+
+```prisma
+generator client {
+  provider                  = "prisma-client-py"
+  minimalRuntime            = true
+  recursiveValidationModels = true
+}
+```
+
+Reach for this if you have roughly **100+ models** or long relation chains, or if upstream
+already fails to import for you. Smaller schemas don't need it (default off).
+
 ### Recommended starting point
 
 ```prisma
@@ -106,6 +147,9 @@ generator client {
   scalarFieldsOnly = false  # turn on only if you don't read relations off instances
 }
 ```
+
+For a **large/deep schema** (≈100+ models, or upstream already fails to import), add
+`recursiveValidationModels = true` (Pydantic v2).
 
 ## Type checking
 
