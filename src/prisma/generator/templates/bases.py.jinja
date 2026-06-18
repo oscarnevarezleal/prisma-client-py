@@ -13,9 +13,9 @@ if TYPE_CHECKING:
 
 
 _PrismaModelT = TypeVar('_PrismaModelT', bound='_PrismaModel')
-
-
 {% if recursive_validation_models is defined and recursive_validation_models %}
+
+
 from ._recursive import ensure_built as _ensure_built
 
 # longest relation chain in the schema; sizes the recursion limit / stack used
@@ -36,7 +36,6 @@ class _PrismaModel(BaseModel):
             defer_build=True,
             {% endif %}
         )
-
     {% if recursive_validation_models is defined and recursive_validation_models %}
     if PYDANTIC_V2 and not TYPE_CHECKING:
         # Compile this model's (deferred) validator on first use, inside an

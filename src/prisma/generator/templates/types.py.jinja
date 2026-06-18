@@ -77,7 +77,6 @@ class _TypedDictProxy(dict):
 from . import types, enums, models, fields
 
 {% else %}
-# Full type definitions for stub file (.pyi)
 from typing import TypeVar
 
 import httpx
@@ -846,12 +845,12 @@ class {{ model.name }}NumberAggregateInput(TypedDict, total=False):
 
 
 {{ model.name }}Keys = Literal[
-    {% for field in model.all_fields -%}
+    {% for field in model.all_fields %}
     {# Skip relationship fields if scalar_fields_only is enabled #}
-    {%- if not (scalar_fields_only and field.relation_name) -%}
+    {% if not (scalar_fields_only and field.relation_name) %}
     '{{ field.name }}',
-    {%- endif -%}
-    {%- endfor %}
+    {% endif %}
+    {% endfor %}
 ]
 {{ model.name }}ScalarFieldKeys = Literal[
     {% for field in model.scalar_fields %}
@@ -875,5 +874,4 @@ class {{ model.name }}NumberAggregateInput(TypedDict, total=False):
 
 # we have to import ourselves as types can be namespaced to types
 from . import types, enums, models, fields
-
 {% endif %}

@@ -1,7 +1,7 @@
 {% include '_header.py.jinja' %}
 # -- template partials.py.jinja --
 from . import types, fields, enums, actions, models, bases
-from ._compat import field_validator
+from ._compat import model_rebuild, field_validator
 
 
 {% for partial in partial_models %}
@@ -40,8 +40,7 @@ class {{ partial.name }}(bases.Base{{ partial.from_model }}):
 from . import partials
 
 {% for partial in partial_models %}
-# Pass models and partials as namespace for forward reference resolution
-{{ partial.name }}.model_rebuild(_types_namespace={'models': models, 'partials': partials})
+model_rebuild({{ partial.name }})
 {% endfor %}
 
 # fmt: on
