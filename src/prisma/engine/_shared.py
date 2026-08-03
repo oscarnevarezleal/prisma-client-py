@@ -70,11 +70,27 @@ class _Registry:
             log.debug('attached to shared engine %s (refcount=%d)', entry.url, entry.refcount)
             return entry.url
 
-    def register(self, key: SharedKey, url: str, process: subprocess.Popen) -> None:  # type: ignore[type-arg]
-        """Take ownership of a freshly spawned engine process."""
+    def register(self, key: SharedKey, url: str, process: subprocess.Popen) -> Optional[str]:  # type: ignore[type-arg]
+        """Take ownership of a freshly spawned engine process.
+
+        `attach` -> spawn -> `register` is not atomic, so two callers can both
+        miss on `attach` and both spawn an engine for the same key. Overwriting
+        the entry here would drop the first process from the registry entirely:
+        nothing would ever kill it and its refcount would be lost.
+
+        Returns the URL of the engine that won such a race, in which case this
+        caller's own process is redundant and it must terminate it; `None` when
+        this process is the one now registered.
+        """
         with self._lock:
+            existing = self._entries.get(key)
+            if existing is not None and existing.process.poll() is None:
+                existing.refcount += 1
+                log.debug('lost spawn race for shared engine %s (refcount=%d)', existing.url, existing.refcount)
+                return existing.url
             self._entries[key] = _Entry(url=url, process=process)
             log.debug('registered shared engine %s', url)
+            return None
 
     def release(self, key: SharedKey, *, kill: Any) -> None:
         """Drop one reference; kill the process when nobody is left.

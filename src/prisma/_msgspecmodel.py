@@ -152,11 +152,16 @@ class PrismaRecord(msgspec.Struct, kw_only=True):
     def dict(self, *, exclude_none: bool = False) -> Dict[str, Any]:
         return self.model_dump(exclude_none=exclude_none)
 
-    def model_dump_json(self) -> str:
+    def model_dump_json(self, *, exclude_none: bool = False) -> str:
+        # `exclude_none` is part of the pydantic and slim spellings, so it has to
+        # be accepted here too or the same call raises `TypeError` on one backend
+        # and works on the others. Only the excluding path pays for the dict hop.
+        if exclude_none:
+            return msgspec.json.encode(self.model_dump(exclude_none=True), enc_hook=_enc_hook).decode()
         return msgspec.json.encode(self, enc_hook=_enc_hook).decode()
 
-    def json(self) -> str:
-        return self.model_dump_json()
+    def json(self, *, exclude_none: bool = False) -> str:
+        return self.model_dump_json(exclude_none=exclude_none)
 
     def to_pydantic(self) -> Any:
         """An equivalent ``pydantic.BaseModel`` instance, for integrations

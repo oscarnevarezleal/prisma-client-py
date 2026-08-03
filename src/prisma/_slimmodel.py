@@ -24,6 +24,7 @@ untrusted data keep the default pydantic backend, or validate at the edge.
 from __future__ import annotations
 
 import json as _json
+import datetime
 import importlib
 from typing import Any, Dict, List, Tuple, Callable, ClassVar, Optional
 from typing_extensions import override
@@ -119,6 +120,18 @@ def related_model(cls: type, field: str) -> type:
     raise KeyError(f'{field!r} is not a relational field on {cls.__name__}')
 
 
+def _json_default(value: Any) -> Any:
+    """Match pydantic's JSON encoding for the types it special-cases.
+
+    `default=str` renders a datetime as `'2024-01-01 00:00:00+00:00'`; pydantic
+    and the msgspec backend both emit ISO 8601 with a `T` separator, and this
+    method exists to be interchangeable with theirs.
+    """
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    return str(value)
+
+
 class SlimModel:
     __slots__ = ()
 
@@ -170,7 +183,7 @@ class SlimModel:
         return self.model_dump(exclude_none=exclude_none)
 
     def model_dump_json(self, *, exclude_none: bool = False) -> str:
-        return _json.dumps(self.model_dump(exclude_none=exclude_none), default=str)
+        return _json.dumps(self.model_dump(exclude_none=exclude_none), default=_json_default)
 
     def json(self, *, exclude_none: bool = False) -> str:
         return self.model_dump_json(exclude_none=exclude_none)

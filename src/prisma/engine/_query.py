@@ -176,8 +176,15 @@ class BaseQueryEngine:
         if not _shared.enabled() or self.process is None or self.url is None:
             return
         key = _shared.make_key(self.dml_path, datasources)
-        _shared.registry.register(key, self.url, self.process)
+        winner = _shared.registry.register(key, self.url, self.process)
         self._shared_key = key
+        if winner is not None:
+            # another thread spawned an engine for the same key first; adopt it
+            # and terminate ours rather than leaving an orphan behind
+            redundant, self.process = self.process, None
+            self.url = winner
+            log.debug('terminating redundant query engine, attached to %s instead', winner)
+            self._terminate_popen(redundant, None)
 
 
 class SyncQueryEngine(BaseQueryEngine, SyncHTTPEngine):

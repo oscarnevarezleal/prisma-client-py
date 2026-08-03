@@ -19,10 +19,23 @@ from ..http_abstract import AbstractResponse
 
 log: logging.Logger = logging.getLogger(__name__)
 
+
 # Response size at or above which one-pass decoding (PRISMA_PY_RAW_DECODE) beats
 # `bytes -> dict -> records`. Tunable because the crossover depends on payload
 # shape and machine; the default sits just below the measured break-even.
-RAW_DECODE_MIN_BYTES: int = int(os.environ.get('PRISMA_PY_RAW_DECODE_MIN_BYTES', '20000'))
+def _raw_decode_min_bytes() -> int:
+    raw = os.environ.get('PRISMA_PY_RAW_DECODE_MIN_BYTES')
+    if raw is None:
+        return 20000
+    try:
+        return int(raw)
+    except ValueError:
+        # this runs at import, so a bare ValueError surfaces as `import prisma`
+        # failing with no hint as to which variable is at fault
+        raise ValueError(f'PRISMA_PY_RAW_DECODE_MIN_BYTES must be an integer, got {raw!r}') from None
+
+
+RAW_DECODE_MIN_BYTES: int = _raw_decode_min_bytes()
 
 
 class BaseHTTPEngine:
