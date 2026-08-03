@@ -157,22 +157,34 @@ Retrofitting recursion later is a rewrite.
 
 Ordered by likelihood of shipping silently.
 
-### 3.1 `every` under three-valued logic — highest risk
+### 3.1 `every` under three-valued logic — **this analysis had it backwards**
 
-`every: C` means *no child fails C*, and is **vacuously true for zero children**.
+The original claim below was that `NOT (C)` is wrong and `(C) IS NOT TRUE` is
+correct. **Measured against a live Prisma engine, the opposite is true**, and
+the correction matters because it was ranked the highest-risk item here.
 
-```sql
--- WRONG: NOT(NULL) is NULL, the row is not counted by EXISTS,
--- so the parent wrongly matches despite having a failing child
-NOT EXISTS (SELECT 1 FROM child WHERE fk = p.id AND NOT (C))
+The experiment (`benchmarks/pg-lab/verify_translations.py`): post `p1` with two
+comments, one where the predicate is TRUE and one where the predicate is NULL
+because the column is NULL.
 
--- CORRECT
-NOT EXISTS (SELECT 1 FROM child WHERE fk = p.id AND (C) IS NOT TRUE)
-```
+| `every: {parentId: 'cB'}` | `p1` matches? |
+| --- | --- |
+| Prisma engine | **True** |
+| `NOT EXISTS (… AND NOT (C))` | True ✅ agrees with Prisma |
+| `NOT EXISTS (… AND (C) IS NOT TRUE)` | False ❌ disagrees |
 
-`IS NOT TRUE` works on PostgreSQL, MySQL 8, SQLite ≥3.23, CockroachDB. **Not
-SQL Server** — there it needs `NOT (CASE WHEN (C) THEN 1 ELSE 0 END = 1)`, or
-push negation into the filter AST leaves (`a = v` → `a <> v OR a IS NULL`, …).
+`IS NOT TRUE` is the set-theoretically defensible reading — a child whose `C` is
+UNKNOWN has not been *shown* to satisfy `C`. Prisma took the other reading: an
+UNKNOWN child is not a violation. A migration is judged on behavioural
+equivalence with Prisma, not on which reading is nicer, so **emit `NOT (C)`**.
+
+Both readings agree whenever `C` cannot evaluate to NULL, which is why this hid:
+in the reference seed data every `parentId` was NULL, so both forms returned the
+same rows and the case proved nothing. Any test for this needs a child row whose
+predicate is genuinely UNKNOWN, and a paired assertion that the *other* form
+disagrees — otherwise it silently goes vacuous.
+
+`every` remains **vacuously true for zero children** under both readings.
 
 ### 3.2 Relation filters are subqueries, never joins
 

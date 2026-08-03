@@ -58,6 +58,7 @@ nav:
       - Partial Types: getting_started/partial-types.md
       - Migrating from Upstream: migrating-from-upstream.md
       - Migrating to SQLAlchemy: migrating-to-sqlalchemy.md
+      - SQLAlchemy Migration Runbook: prisma-to-sqlalchemy-runbook.md
       - Performance Findings: performance-findings.md
   - Reference:
       - Query Operations: reference/operations.md

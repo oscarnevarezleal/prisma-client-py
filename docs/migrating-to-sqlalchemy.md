@@ -1,5 +1,13 @@
 # Migrating from Prisma Client Python to SQLAlchemy
 
+!!! tip "Running this with an agent?"
+
+    [**The runbook**](prisma-to-sqlalchemy-runbook.md) is the procedural version
+    of this page: ordered phases, exact commands, verified translation tables,
+    and explicit STOP conditions. Every translation in it was executed against a
+    live database and compared. This page explains *why*; the runbook says
+    *what to do*.
+
 This is a route map for an application that is already on Prisma Client Python and
 wants to end up on SQLAlchemy, written against *this library's* conventions rather
 than generic ORM-porting advice. The key insight is that almost every seam you need
