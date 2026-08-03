@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import sys
 import shutil
+import difflib
 import subprocess
 from typing import Any, Dict, List, Tuple, Iterator
 from pathlib import Path
@@ -53,10 +54,9 @@ def _split_url(url: str) -> Tuple[str, str]:
 
 
 def _sqlalchemy_url(url: str) -> str:
-    for prefix in ('postgres://', 'postgresql://'):
-        if url.startswith(prefix):
-            return 'postgresql+psycopg://' + url[len(prefix) :]
-    return url
+    scheme, _, rest = url.partition('://')
+    assert scheme in ('postgres', 'postgresql'), f'not a PostgreSQL URL: {url!r}'
+    return f'postgresql+psycopg://{rest}'
 
 
 def _recreate(admin_url: str, name: str) -> None:
@@ -111,8 +111,9 @@ def databases_fixture(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Dict
         text=True,
         env={**os.environ, 'BENCH_DATABASE_URL': f'{base}/{truth}'},
     )
-    if result.returncode != 0:
-        pytest.skip(f'prisma db push failed:\n{result.stdout}\n{result.stderr}')
+    # asserted rather than skipped: this fixture exists to build the database
+    # the comparison runs against, so a push that fails has nothing left to test
+    assert result.returncode == 0, f'prisma db push failed:\n{result.stdout}\n{result.stderr}'
 
     try:
         yield {'base': base, 'truth': f'{base}/{truth}', 'ours': f'{base}/{ours}'}
@@ -135,11 +136,10 @@ def test_ddl_is_identical(databases: Dict[str, str], generated: Dict[str, Any]) 
     truth = _dump(databases['truth'])
     ours = _dump(databases['ours'])
 
-    if truth != ours:
-        import difflib
-
-        diff = '\n'.join(difflib.unified_diff(truth, ours, 'prisma', 'prisma.sa', lineterm=''))
-        pytest.fail(f'DDL differs from what Prisma creates:\n{diff}')
+    # the diff is only built when the assertion is about to fail
+    assert truth == ours, 'DDL differs from what Prisma creates:\n' + '\n'.join(
+        difflib.unified_diff(truth, ours, 'prisma', 'prisma.sa', lineterm='')
+    )
 
     # guard against the comparison silently passing on two empty dumps
     assert sum(1 for line in truth if line.startswith(('CREATE', 'ALTER'))) > 20
@@ -151,12 +151,17 @@ def test_reference_schema_covers_the_hard_shapes(generated: Dict[str, Any]) -> N
     shapes = {rel['shape'] for spec in schema.values() for rel in spec['relations'].values()}
     assert shapes == {'to-one-owner', 'to-one-inverse', 'to-many', 'many-to-many'}
 
-    assert any(spec['table'] != model for model, spec in schema.items()), '@@map'
-    assert any(field['column'] != name for spec in schema.values() for name, field in spec['fields'].items()), '@map'
-    assert any(len(spec['primary_key']['columns']) > 1 for spec in schema.values()), '@@id'
-    assert any(
-        rel.get('join_ambiguous') for spec in schema.values() for rel in spec['relations'].values()
-    ), 'self-referential m2m'
+    # comprehensions rather than `any(...)`: a generator that short-circuits on
+    # the first hit never runs its loop to exhaustion, which leaves the arc out
+    # of the loop unexecuted and the coverage gate red
+    assert [model for model, spec in schema.items() if spec['table'] != model], '@@map'
+    assert [
+        name for spec in schema.values() for name, field in spec['fields'].items() if field['column'] != name
+    ], '@map'
+    assert [spec for spec in schema.values() if len(spec['primary_key']['columns']) > 1], '@@id'
+    assert [
+        rel for spec in schema.values() for rel in spec['relations'].values() if rel.get('join_ambiguous')
+    ], 'self-referential m2m'
     assert generated['enums'], 'enums'
 
 

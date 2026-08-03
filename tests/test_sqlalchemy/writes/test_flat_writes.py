@@ -76,11 +76,20 @@ def stamp(value: datetime.datetime) -> Any:
     )
 
 
-def fingerprint(row: Optional[Any]) -> Any:
-    """A row reduced to what two equivalent writes must agree on."""
-    if row is None:
-        return None
+def _unique_columns(model: str, name: str) -> Any:
+    """The columns of a named unique, read from the schema rather than
+    reconstructed by splitting the constraint name."""
+    found = [u for u in model_schema(model)['uniques'] if u['name'] == name]
+    assert found, f'{model} has no unique named {name!r}'
+    return found[0]['columns']
 
+
+def fingerprint(row: Any) -> Any:
+    """A row reduced to what two equivalent writes must agree on.
+
+    Callers that can see a miss compare against `None` themselves rather than
+    passing it here, so there is no null case to carry.
+    """
     mapping = dict(row)
     out: Dict[str, Any] = {}
     for key, value in mapping.items():
@@ -91,8 +100,10 @@ def fingerprint(row: Optional[Any]) -> Any:
         else:
             out[key] = value
 
-    if 'createdAt' in mapping and 'updatedAt' in mapping:
-        out['createdAt == updatedAt'] = mapping['createdAt'] == mapping['updatedAt']
+    # every model this is used on carries both, and the comparison is the point
+    # of the fingerprint, so a row without them is a mistake rather than a case
+    assert 'createdAt' in mapping and 'updatedAt' in mapping, f'row has no timestamps: {sorted(mapping)}'
+    out['createdAt == updatedAt'] = mapping['createdAt'] == mapping['updatedAt']
     return out
 
 
@@ -378,7 +389,7 @@ def test_update_by_compound_unique_reads_its_members_from_the_schema(
     that splits the constraint name produces a column that does not exist, and
     that is before considering a field with an underscore in it.
     """
-    columns = next(u for u in model_schema('Account')['uniques'] if u['name'] == 'slug_role')['columns']
+    columns = _unique_columns('Account', 'slug_role')
     assert columns == ['url_slug', 'role']
     assert 'slug' not in accounts.c, 'splitting `slug_role` on `_` would name a column that is not there'
 
@@ -540,7 +551,7 @@ def test_delete_by_compound_unique(
     write_engine: 'sa.Engine',
     accounts: 'sa.Table',
 ) -> None:
-    columns = next(u for u in model_schema('Account')['uniques'] if u['name'] == 'slug_role')['columns']
+    columns = _unique_columns('Account', 'slug_role')
 
     prisma_client.account.create(data=account_data('theirs@example.com', 'shared', role='ADMIN'))
     prisma_client.account.create(data=account_data('ours@example.com', 'shared', role='OWNER'))

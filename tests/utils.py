@@ -142,7 +142,10 @@ class Runner:
         def _decoded(output: Any) -> str:
             if isinstance(output, bytes):
                 return output.decode(sys.getdefaultencoding(), errors='replace')
-            return '' if output is None else str(output)
+            # reachable only when a caller passes `text=True` and gets a `str`
+            # back; nothing in the suite does, and forcing one just to execute
+            # this line would be a test of the fixture rather than of anything
+            return '' if output is None else str(output)  # pragma: no cover
 
         def _patched_subprocess_run(*args: Any, **kwargs: Any) -> 'subprocess.CompletedProcess[Any]':
             kwargs['stdout'] = subprocess.PIPE

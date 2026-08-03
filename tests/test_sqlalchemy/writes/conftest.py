@@ -116,10 +116,9 @@ def _split_url(url: str) -> Tuple[str, str]:
 
 def sqlalchemy_url(url: str) -> str:
     """`postgres://` -> the driver actually installed here."""
-    for prefix in ('postgres://', 'postgresql://'):
-        if url.startswith(prefix):
-            return 'postgresql+psycopg://' + url[len(prefix) :]
-    return url
+    scheme, _, rest = url.partition('://')
+    assert scheme in ('postgres', 'postgresql'), f'not a PostgreSQL URL: {url!r}'
+    return f'postgresql+psycopg://{rest}'
 
 
 def _admin(url: str, *statements: str) -> None:
@@ -166,9 +165,9 @@ def write_database_url_fixture(tmp_path_factory: pytest.TempPathFactory) -> Iter
         text=True,
         env={**os.environ, 'BENCH_DATABASE_URL': url},
     )
-    if result.returncode != 0:
+    if result.returncode != 0:  # pragma: no cover - the whole session is over if this fires
         _admin(DATABASE_URL, f'DROP DATABASE IF EXISTS "{name}"')
-        pytest.skip(f'prisma db push failed:\n{result.stdout}\n{result.stderr}')
+        pytest.fail(f'prisma db push failed:\n{result.stdout}\n{result.stderr}')
 
     sys.path.insert(0, str(workdir))
     try:
@@ -277,7 +276,10 @@ def _truncate(url: str) -> None:
                 )
             ).scalars()
             names = ', '.join(f'"{table}"' for table in tables)
-            if names:
-                conn.execute(sqlalchemy.text(f'TRUNCATE {names} RESTART IDENTITY CASCADE'))
+            # `prisma db push` has already run against this database, so an empty
+            # list means the schema is not there and every test is about to fail
+            # for a reason worth naming here rather than 40 rows down
+            assert names, 'the scratch database has no tables to truncate'
+            conn.execute(sqlalchemy.text(f'TRUNCATE {names} RESTART IDENTITY CASCADE'))
     finally:
         engine.dispose()
