@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import decimal
 import datetime
+import importlib
 from typing import Any, Dict, List, Mapping, Callable, Sequence
 
 import pytest
@@ -41,6 +42,8 @@ from sqlalchemy.dialects import postgresql
 
 from prisma.sa import values_for_create, values_for_update
 from prisma._schema import model_schema
+
+from .conftest import CLIENT_PACKAGE
 
 RECENT = datetime.timedelta(minutes=5)
 
@@ -654,16 +657,24 @@ def test_a_read_then_write_translation_does_not_survive_a_concurrent_insert(
     write_engine: 'sa.Engine',
     accounts: 'sa.Table',
 ) -> None:
-    """Same interleaving, executed against the translation the runbook rejects.
+    """The same losing race, executed against the translation the runbook rejects.
 
-    The read says the row is absent, another writer inserts it, and the INSERT
-    that follows is a unique violation. Prisma, whose statement has no window,
-    updates instead.
+    Another writer lands the row; the difference is *where* it can land. Prisma's
+    statement has no window, so the only place is before it — and it takes the
+    update branch. The read-then-write form has a window between its `SELECT` and
+    its `INSERT`, the other writer lands in it, and the `INSERT` is a unique
+    violation instead.
+
+    `1.50` is the create payload's balance and `5.00` only ever comes from the
+    update payload, so which branch ran is readable off the row.
     """
+    insert_elsewhere(write_engine, accounts, 'Account', account_data('theirs@example.com', 'theirs'))()
     prisma_client.account.upsert(
         where={'email': 'theirs@example.com'},
         data={'create': account_data('theirs@example.com', 'theirs'), 'update': {'balance': decimal.Decimal('5.00')}},
     )
+    theirs = read(write_engine, accounts, accounts.c.email == 'theirs@example.com')
+    assert theirs['balance'] == decimal.Decimal('5.00'), 'Prisma updated the other writer’s row'
 
     with pytest.raises(sa_exc.IntegrityError) as caught:
         read_then_write(
@@ -677,9 +688,8 @@ def test_a_read_then_write_translation_does_not_survive_a_concurrent_insert(
         )
 
     assert getattr(caught.value.orig, 'sqlstate', None) == '23505'
-    assert read(write_engine, accounts, accounts.c.email == 'theirs@example.com')['balance'] == decimal.Decimal(
-        '5.00'
-    ), 'Prisma took the update branch under the same interleaving'
+    ours = read(write_engine, accounts, accounts.c.email == 'ours@example.com')
+    assert ours['balance'] == decimal.Decimal('1.50'), 'the interloper’s row, and our write never landed at all'
 
 
 def test_the_read_then_write_translation_is_right_only_when_nothing_races_it(
@@ -779,7 +789,9 @@ def test_a_conflict_on_a_different_unique_is_not_caught_by_the_conflict_target(
     Both callers raise, and neither writes a row — but the exception class
     changes, so a call site catching `UniqueViolationError` catches nothing.
     """
-    errors = pytest.importorskip(f'{prisma_client.__class__.__module__.split(".")[0]}.errors')
+    # the generated client bundles its own runtime, so its error classes are not
+    # `prisma.errors`' — reach for the ones the client actually raises
+    errors = importlib.import_module(f'{CLIENT_PACKAGE}.errors')
 
     prisma_client.account.create(data=account_data('taken@example.com', 'taken', role='ADMIN'))
 

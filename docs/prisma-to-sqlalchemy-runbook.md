@@ -9,7 +9,8 @@ Every translation below was executed against a live PostgreSQL database with
 both Prisma and SQLAlchemy and the results compared row for row. The harnesses
 are `benchmarks/pg-lab/verify_translations.py` for reads,
 `benchmarks/pg-lab/verify_writes.py` for single-row writes,
-`benchmarks/pg-lab/verify_bulk_writes.py` for the `*_many` family and
+`benchmarks/pg-lab/verify_bulk_writes.py` for the `*_many` family,
+`benchmarks/pg-lab/verify_upsert.py` for `upsert` and
 `benchmarks/pg-lab/verify_transactions.py` for `tx()` and `batch_()`, and they
 are the source of truth for this file. A translation not in the table has not
 been verified and must not be emitted.
@@ -503,6 +504,292 @@ Still **STOP** for bulk writes: nested writes inside `create_many` data, and
 atomic operations in `update_many` data (`{'increment': 1}`) — `values_for_update`
 refuses the latter by name rather than writing the mapping into the column.
 
+#### Upsert
+
+`upsert` is the one write that is not a single statement in Prisma either.
+Read the precondition below **before** emitting any of this: outside it, Prisma
+does something else entirely and these rows do not apply.
+
+Verified by `benchmarks/pg-lab/verify_upsert.py` against the 41-model lab schema
+and by `tests/test_sqlalchemy/writes/test_upsert.py` in CI.
+
+| Prisma | SQLAlchemy Core |
+| --- | --- |
+| `db.post.upsert(where=W, data={'create': C, 'update': U})` | `upsert(conn, post, 'Post', W, C, U)` — below |
+| `where={'id': x}` | conflict target `['id']` |
+| `where={'email': x}` (single `@unique`, `@map` resolved) | `['email']`, from `model_schema(M)['fields'][key]['column']` |
+| `where={'siteId_slug': {...}}` (compound `@@unique`) | `['siteId', 'slug']`, from `model_schema(M)['uniques']` |
+| `where={'day_siteId': {...}}` (compound `@@id`) | `['day', 'siteId']`, from `model_schema(M)['primary_key']['columns']` |
+| the row `upsert` returns, on either branch | `.returning(*table.c)` → `.mappings().one()` |
+
+```python
+import datetime
+from sqlalchemy.dialects import postgresql
+from prisma.sa import values_for_create, values_for_update
+from prisma._schema import model_schema
+
+def upsert(conn, table, model, where, create, update):
+    moment = datetime.datetime.now(datetime.timezone.utc)
+    statement = (
+        postgresql.insert(table)
+        .values(**values_for_create(model, create, moment=moment))
+        .on_conflict_do_update(
+            index_elements=list(conflict_target(model, where)),
+            set_=values_for_update(model, update, moment=moment),
+        )
+        .returning(*table.c)
+    )
+    return conn.execute(statement).mappings().one()
+
+def conflict_target(model, where):
+    """The columns ON CONFLICT needs, from the one unique `where` names."""
+    if len(where) != 1:
+        raise LookupError(f'{model}: a `where` for upsert names exactly one unique')
+
+    (key,) = where
+    spec = model_schema(model)
+
+    field = spec['fields'].get(key)
+    if field is not None and (field['is_id'] or field['is_unique']):
+        return [field['column']]              # single @id / @unique, @map resolved
+
+    for unique in spec['uniques']:
+        if unique['name'] == key:
+            return unique['columns']          # compound @@unique
+
+    if spec['primary_key']['name'] == key:
+        return spec['primary_key']['columns'] # compound @@id — NOT in ['uniques']
+
+    raise LookupError(f'{model}.{key} is not a unique constraint')
+```
+
+**The precondition: `create` must give the fields in `where` the values `where`
+gives them.** This is not a style rule. Measured from the query engine's own
+query log, `upsert` compiles **two different ways**:
+
+| when | the engine emits |
+| --- | --- |
+| `create`'s values for the `where` fields equal `where`'s | `INSERT … ON CONFLICT (<where's columns>) DO UPDATE SET <update>, "updatedAt" = $n WHERE <where> RETURNING *` |
+| they differ, or `update` is `{}`, or `include=` is passed, or either payload nests | `BEGIN; SELECT id WHERE <where>;` then `UPDATE` or `INSERT`; `SELECT row; COMMIT` |
+
+`ON CONFLICT` keys on the row being **inserted**; Prisma's `where` selects the
+row independently. Once the two disagree they address different rows. Measured,
+with a row at `slug='left'` and `create` naming `slug='right'`:
+
+| | rows afterwards |
+| --- | --- |
+| Prisma | `[('left', 'updated')]` — it round-tripped and updated the existing row |
+| `on_conflict_do_update` | `[('left', 'seed left'), ('right', 'created')]` ❌ — it conflicted with nothing |
+
+So: **if `create` does not set the `where` fields to the `where` values, STOP.**
+Every row in the table above was executed under the precondition.
+
+**It is one statement, and that is the point.** The insert is attempted even when
+the row exists — measured on a model whose id is a `SERIAL`, the sequence
+advances on the update branch too, by exactly as much for Prisma as for the
+translation. The consequence is the concurrency behaviour. Measured with another
+connection inserting the same key before the statement runs — and, for the
+read-then-write form, after its `SELECT` and before its `INSERT`, which is the
+window a single statement does not have:
+
+| translation | under a concurrent insert of the same key |
+| --- | --- |
+| `db.post.upsert(...)` | updates the other writer's row |
+| `on_conflict_do_update` | updates it too ✅ |
+| `SELECT`, then `INSERT` or `UPDATE` | `IntegrityError`, SQLSTATE `23505` ❌ |
+
+A read-then-write translation lands the same rows as `ON CONFLICT` on every
+uncontended run, so nothing about testing it will tell you it is wrong.
+
+**What lands on each branch.** `values_for_create` fills the create branch
+exactly as it does for `create` — `cuid()`, `createdAt`, `updatedAt` — and
+`values_for_update` fills the update branch with the update payload plus a fresh
+`@updatedAt`, and nothing else:
+
+| | measured |
+| --- | --- |
+| create branch | the create payload; `createdAt == updatedAt`; the update payload is **not** applied |
+| update branch | the update payload; `id` and `createdAt` unchanged; `updatedAt` moves; the create payload is **not** applied |
+
+**Pass one `moment` to both halves.** The engine binds a single instant into the
+statement: the `updatedAt` in `DO UPDATE SET` is the same bind as the `createdAt`
+in `VALUES`. Calling `values_for_create` and `values_for_update` without sharing
+a `moment` reads the clock twice for one statement.
+
+**The generated id on the update branch is discarded.** `values_for_create`
+generates a cuid every call, and on a conflict it never reaches a row — which is
+what Prisma does too. Do not try to avoid it; the `VALUES` clause needs it.
+
+**`ON CONFLICT (a)` says nothing about unique `b`.** If the row being inserted
+violates a *different* unique constraint, the statement raises rather than
+updating — as Prisma does. `prisma.errors.UniqueViolationError` becomes
+`sqlalchemy.exc.IntegrityError`; identify it by `exc.orig.sqlstate == '23505'`.
+
+**The return value is the same row, and not the same Python objects** — the same
+caveat as `create`/`update`/`delete`: Prisma hands back the enum member and an
+aware UTC datetime, `RETURNING` hands back the stored label and a naive datetime
+for `timestamp without time zone`.
+
+Still **STOP** for `upsert`:
+
+| | why |
+| --- | --- |
+| `update={}` | Prisma drops out of the single statement and writes **nothing** — measured, `@updatedAt` does not move. `values_for_update({})` still stamps `@updatedAt`, and on a model without one the `set_` is empty and SQLAlchemy refuses to compile the statement at all. |
+| `create` disagreeing with `where` on the unique | above |
+| nested writes in either payload | Prisma performs them; `values_for_create` raises `LookupError` naming the relation field |
+| atomic operations in `update` (`{'increment': 1}`) | Prisma compiles them into the `DO UPDATE SET`; `values_for_update` refuses them by name |
+| `include=` | not verified — and it is one of the things that makes Prisma round-trip |
+
+#### Transactions
+
+`engine` is a `sqlalchemy.Engine`. Verified by
+`benchmarks/pg-lab/verify_transactions.py` against the 41-model lab schema and
+by `tests/test_sqlalchemy/writes/test_transactions.py` in CI.
+
+| Prisma | SQLAlchemy Core |
+| --- | --- |
+| `async with db.tx() as tx:` | `with engine.begin() as conn:` |
+| `tx = await db.tx().start()` … `await manager.rollback()` | `conn = engine.connect()`; `t = conn.begin()` … `t.rollback()` |
+| a `tx()` opened inside a `tx()` | a **second** `engine.begin()` — *not* `conn.begin_nested()` |
+| `async with db.batch_() as batcher:` | the same statements between one `engine.begin()` |
+| `async with tx.batch_() as batcher:` | the same statements on the connection already open |
+
+**It is `engine.begin()` — not a `Session`, and not a savepoint.** `prisma.sa`
+produces Core `Table` objects and no declarative classes, so there is no
+`Session` to open; and a savepoint is measurably the wrong shape for nesting
+(below).
+
+**Both open at READ COMMITTED, so the isolation level is not a hazard.**
+Measured with `SHOW transaction_isolation` from *inside* the transaction on each
+side. `prisma-client-py`'s `tx()` takes `max_wait` and `timeout` and nothing
+else — there is no isolation-level argument to carry across, and both sides
+simply get PostgreSQL's `default_transaction_isolation`. Neither side sets
+`statement_timeout`, `idle_in_transaction_session_timeout` or `lock_timeout`;
+all three read `0` inside a `tx()` and inside an `engine.begin()`.
+
+A `tx()` is genuinely one database transaction, and so is a `batch_()`: every
+row written in one block shares one `xmin`, where the same writes issued
+separately produce two.
+
+**Rollback semantics are identical.**
+
+| | Prisma | SQLAlchemy |
+| --- | --- | --- |
+| block exits cleanly | commits | commits ✅ |
+| block raises | rolls back, re-raises the original | rolls back, re-raises ✅ |
+| explicit `rollback()` | discards the block | discards the block ✅ |
+| handle used after the block | `TransactionExpiredError` | `ResourceClosedError` ✅ |
+
+The last row is the only one that changes code: both refuse, so the control flow
+is unchanged, but an `except prisma.errors.TransactionExpiredError` has to
+become `except sqlalchemy.exc.ResourceClosedError`.
+
+**A failed statement poisons the rest of the transaction — on both sides.**
+PostgreSQL aborts the transaction and refuses everything after it with SQLSTATE
+`25P02`, whether the statement went through Prisma or through SQLAlchemy.
+Measured after catching a unique violation inside the block:
+
+| | the next statement in the block |
+| --- | --- |
+| Prisma `tx()` | fails, `25P02` |
+| `engine.begin()` | fails, `25P02` ✅ |
+| `engine.begin()` + `conn.begin_nested()` around the failure | succeeds, block commits |
+
+A call site that catches an error inside a `tx()` and carries on was already
+broken before the migration — Prisma exposes no savepoint API, so there was
+never anything to recover with. `begin_nested()` is a capability the migration
+*gains*; it is not a translation of anything and should not be introduced while
+the two sides are still being compared.
+
+**A `tx()` inside a `tx()` is not a savepoint — it is a second, independent
+transaction.** `prisma-client-py` warns (`The current client is already in a
+transaction`) and then starts a wholly separate transaction on a separate
+connection. Measured on whether the inner block can see the outer block's
+uncommitted row:
+
+| | inner sees the outer's uncommitted row? |
+| --- | --- |
+| Prisma `tx()` inside `tx()` | no |
+| a second `engine.begin()` | no ✅ |
+| `conn.begin_nested()` | **yes** ❌ |
+
+The inner transaction commits on its own — the outer rolling back does not undo
+it — and an inner transaction that rolls back leaves the outer one usable,
+because it never shared it. Two independent transactions, not one nested one.
+
+`xmin` cannot tell the two apart: PostgreSQL gives each savepoint its own
+*sub*transaction id, so rows written inside a `begin_nested()` carry a different
+`xmin` from rows written before it even though one top-level transaction commits
+them all. Visibility is the measurement that distinguishes them.
+
+**Migrate a `tx()` block whole, or leave it entirely on Prisma.** Translating
+one statement inside a `tx()` and leaving the next on Prisma produces *two*
+transactions on two connections that look like one block. Measured inside a
+single `with db.tx()` block containing one Prisma write and one SQLAlchemy
+write:
+
+| | |
+| --- | --- |
+| the two transaction ids | different |
+| the SQLAlchemy half sees the Prisma half | no |
+| the Prisma half sees the SQLAlchemy half | no |
+| rolling back the SQLAlchemy half | leaves the Prisma half committed ❌ |
+
+Migrated whole, the same block is one transaction with one rollback boundary.
+There is no way to make a Prisma client join a SQLAlchemy transaction — the
+client is a separate process on its own connection — so this is a rule about
+call-site granularity, not a translation to look for. It is the same reason the
+`connection` fixture in `tests/test_sqlalchemy/writes/conftest.py` cannot show
+its rows to `prisma_client`.
+
+**A call site handed a `Connection` must not call `conn.begin()`.** A
+`Connection` autobegins on its first statement, so a helper that was
+`async with db.tx():` and becomes `conn.begin()` raises
+`InvalidRequestError: … already initialized a SQLAlchemy Transaction()` the
+moment its caller has already used the connection — a request-scoped
+transaction, or that test fixture. Take the `Connection` as a parameter and let
+the caller own the boundary; `conn.begin_nested()` is the only inner boundary
+that composes, and it works on a fresh connection too.
+
+**`batch_()` is a transaction, not just a pipeline.** The queries reach the
+engine in one payload, but what makes it translatable is that they land in one
+database transaction, which `engine.begin()` reproduces:
+
+| | measured |
+| --- | --- |
+| one conflict in the batch | discards the batch, including the queries before it — both sides |
+| rows written | one `xmin` — both sides |
+| an empty `batch_()` | writes nothing, raises nothing — both sides |
+| `create` + `create_many` + `update_many` + `delete_many` in one batch | one transaction, same rows — both sides |
+| `batch_()` inside a `tx()` | joins the outer transaction, commits nothing of its own |
+| what a batch member returns | `None` |
+
+The per-statement translations inside a batch are §4.1's, unchanged. Because a
+batch member returns `None`, a call site inside a `batch_()` already cannot read
+back what it wrote, so nothing is lost by `conn.execute()` returning a
+`CursorResult` instead.
+
+**`max_wait` is `pool_timeout` — but not by default.** Both bound how long a
+caller waits for a *connection*, and both refuse rather than block forever:
+opening transactions without closing them exhausts the engine's pool and raises
+`P2028` on the Prisma side, and `sqlalchemy.exc.TimeoutError` on the SQLAlchemy
+side. The defaults are far apart — `max_wait` is 2s, `pool_timeout` is 30s — so
+it is an analogue to set deliberately on `create_engine`, never one to inherit.
+
+**`timeout` has no SQLAlchemy equivalent. It is a STOP (§5).** It is not a
+statement timeout and not a lock timeout: the query engine enforces it with its
+own timer *between* queries, which is why no PostgreSQL-side timeout is set.
+Measured against a row locked by another connection for 1.2s, with
+`timeout=200ms`:
+
+| | |
+| --- | --- |
+| Prisma `tx(timeout=200ms)` | sits through the entire 1.2s wait, then finds the transaction expired |
+| `SET LOCAL lock_timeout = '200ms'` | gives up at 200ms, while the lock is still held ❌ |
+
+`lock_timeout` is the setting that *looks* like the translation and is a
+different behaviour, not the same one spelled differently. Do not emit it.
+
 #### Aggregates
 
 | Prisma | SQLAlchemy |
@@ -583,11 +870,13 @@ in place, record it in the report, and continue with the others.
 
 | Operation | Why |
 | --- | --- |
-| `upsert` | Not verified. `create` / `update` / `delete` and `create_many` / `update_many` / `delete_many` **are** — see §4.1 — but only for scalar columns. |
+| `upsert` where `create` does not give the `where` fields the `where` values, or `update` is `{}`, or `include=` is passed | Prisma stops compiling the single `INSERT … ON CONFLICT` and round-trips instead, and the two are **not** the same operation. The flat form, under that precondition, **is** verified — see §4.1. |
 | Nested writes (`create: {..., posts: {create: [...]}}`) | Requires a recursive planner. Ordering, FK satisfaction and rollback are all unsolved here. `values_for_create` raises `LookupError` on a relation field rather than half-translating one. |
 | `connect` / `disconnect` / `set` / `connectOrCreate` | `disconnect` and `set` are **illegal** against a NOT NULL foreign key — Prisma raises P2014. Check `relation(...)['fk_required']` before assuming otherwise. |
 | `aggregate()` (`_sum`, `_avg`, `_min`, `_max`) | Not verified. |
-| `db.tx()` / transactions | Prisma's transaction semantics and SQLAlchemy's do not map one-to-one. |
+| `db.tx(timeout=...)` | No equivalent. Prisma's query engine enforces it between queries with its own timer; it is neither `statement_timeout` nor `lock_timeout`, and a `tx()` blocked on a lock outlives it. See §4.1 — `db.tx()` and `db.batch_()` themselves **are** verified. |
+| A transaction spanning a Prisma client *and* a SQLAlchemy connection | Impossible, measured, not merely unverified: the client is a separate process on its own connection, and the two transactions cannot see each other. Migrate a `tx()` block whole or leave all of it on Prisma. |
+| An isolation level other than the default | `tx()` cannot request one, so there is nothing to translate and nothing was measured beyond both sides opening at READ COMMITTED. |
 | Self-referential implicit m2m | Which side is join column `A` is not recoverable from the DMMF. `relation(...)['join_ambiguous']` is `True`; traversal would be a coin flip. It is `False` on every other relation, so the check is always safe to make. |
 | `Json` field filtering (`path`, `string_contains`) | Not verified. |
 | Scalar list filters (`has`, `hasEvery`, `hasSome`) | Not verified. |
@@ -638,10 +927,11 @@ Stated so an agent does not go looking for it:
   check in.
 - **No query compiler.** Prisma calls are not automatically redirected;
   §4 is a hand translation.
-- **Writes are only partly verified.** Single-row `create` / `update` / `delete`
-  and the set-based `create_many` / `update_many` / `delete_many`, over scalar
-  columns, are in §4.1. Everything else — nested writes, `connect`, `upsert`,
-  atomic operations — is still §5. On a typical application writes are the
+- **Writes are only partly verified.** Single-row `create` / `update` / `delete`,
+  the set-based `create_many` / `update_many` / `delete_many` and the flat form
+  of `upsert`, over scalar columns, are in §4.1. Everything else — nested writes,
+  `connect`, atomic operations, and the `upsert` shapes that make Prisma
+  round-trip — is still §5. On a typical application writes are the
   majority of call sites (one field report measured 62%), so expect Phase 4 to
   be partial and say so in the report.
 - **PostgreSQL only.**
