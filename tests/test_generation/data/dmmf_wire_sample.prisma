@@ -105,7 +105,8 @@ model Ticket {
   seenAt    DateTime @db.Timestamptz(6)
   priority  Int      @db.SmallInt
 
-  links TicketRequirementsOnDocuments[]
+  links     TicketRequirementsOnDocuments[]
+  geofences Geofence[]
 }
 
 // B3: the derived unique constraint name is 81 characters. PostgreSQL truncates
@@ -120,4 +121,46 @@ model TicketRequirementsOnDocuments {
   @@id([documentId, documentRequirementId])
   @@unique([documentId, documentRequirementId, ticketId])
   @@map("ticket_requirements_on_documents")
+}
+
+// Three more shapes, from the retest of the fix above. All three were
+// unreachable before — B2 crashed first — and none was in this schema, which is
+// the same reason the original five got through.
+model Geofence {
+  id String @id @default(uuid()) @db.Uuid
+
+  // B7: `@relation(map:)` is absent from the DMMF, like `@db.*`. Without lexing
+  // it the constraint is named after the table instead, and the bug is
+  // invisible except where `map:` is doing something — the only reason to write
+  // it. Alembic does not compare constraint names, so the gate stays quiet.
+  ticketId String @map("ticket_id") @db.Uuid
+  ticket   Ticket @relation(fields: [ticketId], references: [id], map: "custom_geofence_fk")
+
+  scopeId   String   @map("scope_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // B6: `sort: Desc` is in the DMMF and was simply dropped. On a composite
+  // index that is not cosmetic — (a ASC, b ASC) read backwards is (a DESC,
+  // b DESC), which serves neither `ORDER BY a, b DESC` nor `ORDER BY a DESC, b`.
+  @@index([scopeId, createdAt(sort: Desc)], map: "idx_geofence_scope_created")
+  @@map("geofences")
+}
+
+// B3 remainder: the *foreign key* name also overflows 63 characters. The
+// original report's example was a `_key`; it became the test case and the
+// `_fkey` path was never exercised — the response's own lesson, recurring
+// inside its own fix.
+model JourneyOrderInstruction {
+  id        String                            @id @default(uuid()) @db.Uuid
+  geofences JourneyOrderInstructionGeofence[]
+
+  @@map("journey_order_instruction")
+}
+
+model JourneyOrderInstructionGeofence {
+  id                        String                  @id @default(uuid()) @db.Uuid
+  journeyOrderInstructionId String                  @map("journey_order_instruction_id") @db.Uuid
+  journeyOrderInstruction   JourneyOrderInstruction @relation(fields: [journeyOrderInstructionId], references: [id])
+
+  @@map("journey_order_instruction_geofences")
 }

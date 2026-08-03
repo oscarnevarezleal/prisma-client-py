@@ -1,5 +1,5 @@
 {
- "datamodel": "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"BENCH_DATABASE_URL\")\n}\n\ngenerator client {\n  provider                    = \"python -m prisma\"\n  interface                   = \"asyncio\"\n  output                      = \"./client\"\n  enable_experimental_decimal = true\n  schemaMetadata              = true\n}\n\nenum Role {\n  OWNER\n  ADMIN  @map(\"administrator\")\n  VIEWER\n}\n\nmodel Account {\n  id        String   @id @default(cuid())\n  email     String   @unique\n  slug      String   @map(\"url_slug\")\n  role      Role     @default(VIEWER)\n  balance   Decimal\n  payload   Json?\n  secret    Bytes?\n  visits    BigInt   @default(0)\n  tags      String[]\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n  posts     Entry[]\n  profile   Profile?\n\n  @@unique([slug, role], name: \"slug_role\")\n  @@index([email, createdAt], map: \"account_email_created_idx\")\n  @@map(\"accounts\")\n}\n\nmodel Entry {\n  id        String  @id @default(cuid())\n  accountId String\n  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)\n  title     String\n  parentId  String?\n  parent    Entry?  @relation(\"tree\", fields: [parentId], references: [id])\n  children  Entry[] @relation(\"tree\")\n  labels    Label[]\n\n  @@index([accountId])\n}\n\n// The FK lives on the *other* side of a to-one relation, which compiles\n// differently to `Entry.account` even though both are `to-one`.\nmodel Profile {\n  id        Int     @id @default(autoincrement())\n  accountId String  @unique @map(\"account_id\")\n  account   Account @relation(fields: [accountId], references: [id])\n  bio       String?\n}\n\nmodel Label {\n  id      Int     @id @default(autoincrement())\n  name    String  @map(\"label_name\")\n  entries Entry[]\n  related Label[] @relation(\"similar\")\n  similar Label[] @relation(\"similar\")\n\n  @@map(\"labels\")\n}\n\nmodel Composite {\n  left  String\n  right String\n  note  String?\n\n  @@id([left, right])\n}\n\n// Every model below covers a defect found by a client running the migration\n// runbook against a 182-model production schema. All five produced either a\n// crash or a silent divergence, and none was reachable from the models above.\nmodel Ticket {\n  // B2: Prisma normalises `uuid()` to `uuid(4)` on the wire. Left attached, the\n  // versioned name matched no allowlist entry and blocked the whole schema.\n  id String @id @default(uuid()) @db.Uuid\n\n  // B5: a non-primary-key autoincrement. SQLAlchemy emits SERIAL only for an\n  // integer *primary* key, so this silently lost its sequence and every INSERT\n  // failed \u2014 with an empty Alembic diff, because server defaults are not\n  // compared.\n  ticketNumber Int    @default(autoincrement())\n  bigNumber    BigInt @default(autoincrement())\n\n  // B4: an empty scalar list default. A bare `ARRAY[]` is a PostgreSQL error,\n  // not a diff: `cannot determine type of empty array`.\n  readBy   String[] @default([]) @db.Uuid\n  keywords String[] @default([\"urgent\", \"billing\"])\n\n  // B1: `@db.*` never reaches the generator payload, so these read as `text`\n  // unless the raw schema is lexed. On the reporting client that was 554\n  // columns including every primary and foreign key.\n  reference String   @db.VarChar(40)\n  amount    Decimal  @db.Decimal(12, 2)\n  seenAt    DateTime @db.Timestamptz(6)\n  priority  Int      @db.SmallInt\n\n  links TicketRequirementsOnDocuments[]\n}\n\n// B3: the derived unique constraint name is 81 characters. PostgreSQL truncates\n// at 63 and so does Prisma; SQLAlchemy raises `IdentifierError` before emitting\n// any SQL, which fails the Alembic step outright.\nmodel TicketRequirementsOnDocuments {\n  documentId            String\n  documentRequirementId String\n  ticketId              String @db.Uuid\n  ticket                Ticket @relation(fields: [ticketId], references: [id])\n\n  @@id([documentId, documentRequirementId])\n  @@unique([documentId, documentRequirementId, ticketId])\n  @@map(\"ticket_requirements_on_documents\")\n}\n",
+ "datamodel": "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"BENCH_DATABASE_URL\")\n}\n\ngenerator client {\n  provider                    = \"python -m prisma\"\n  interface                   = \"asyncio\"\n  output                      = \"./client\"\n  enable_experimental_decimal = true\n  schemaMetadata              = true\n}\n\nenum Role {\n  OWNER\n  ADMIN  @map(\"administrator\")\n  VIEWER\n}\n\nmodel Account {\n  id        String   @id @default(cuid())\n  email     String   @unique\n  slug      String   @map(\"url_slug\")\n  role      Role     @default(VIEWER)\n  balance   Decimal\n  payload   Json?\n  secret    Bytes?\n  visits    BigInt   @default(0)\n  tags      String[]\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n  posts     Entry[]\n  profile   Profile?\n\n  @@unique([slug, role], name: \"slug_role\")\n  @@index([email, createdAt], map: \"account_email_created_idx\")\n  @@map(\"accounts\")\n}\n\nmodel Entry {\n  id        String  @id @default(cuid())\n  accountId String\n  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)\n  title     String\n  parentId  String?\n  parent    Entry?  @relation(\"tree\", fields: [parentId], references: [id])\n  children  Entry[] @relation(\"tree\")\n  labels    Label[]\n\n  @@index([accountId])\n}\n\n// The FK lives on the *other* side of a to-one relation, which compiles\n// differently to `Entry.account` even though both are `to-one`.\nmodel Profile {\n  id        Int     @id @default(autoincrement())\n  accountId String  @unique @map(\"account_id\")\n  account   Account @relation(fields: [accountId], references: [id])\n  bio       String?\n}\n\nmodel Label {\n  id      Int     @id @default(autoincrement())\n  name    String  @map(\"label_name\")\n  entries Entry[]\n  related Label[] @relation(\"similar\")\n  similar Label[] @relation(\"similar\")\n\n  @@map(\"labels\")\n}\n\nmodel Composite {\n  left  String\n  right String\n  note  String?\n\n  @@id([left, right])\n}\n\n// Every model below covers a defect found by a client running the migration\n// runbook against a 182-model production schema. All five produced either a\n// crash or a silent divergence, and none was reachable from the models above.\nmodel Ticket {\n  // B2: Prisma normalises `uuid()` to `uuid(4)` on the wire. Left attached, the\n  // versioned name matched no allowlist entry and blocked the whole schema.\n  id String @id @default(uuid()) @db.Uuid\n\n  // B5: a non-primary-key autoincrement. SQLAlchemy emits SERIAL only for an\n  // integer *primary* key, so this silently lost its sequence and every INSERT\n  // failed \u2014 with an empty Alembic diff, because server defaults are not\n  // compared.\n  ticketNumber Int    @default(autoincrement())\n  bigNumber    BigInt @default(autoincrement())\n\n  // B4: an empty scalar list default. A bare `ARRAY[]` is a PostgreSQL error,\n  // not a diff: `cannot determine type of empty array`.\n  readBy   String[] @default([]) @db.Uuid\n  keywords String[] @default([\"urgent\", \"billing\"])\n\n  // B1: `@db.*` never reaches the generator payload, so these read as `text`\n  // unless the raw schema is lexed. On the reporting client that was 554\n  // columns including every primary and foreign key.\n  reference String   @db.VarChar(40)\n  amount    Decimal  @db.Decimal(12, 2)\n  seenAt    DateTime @db.Timestamptz(6)\n  priority  Int      @db.SmallInt\n\n  links     TicketRequirementsOnDocuments[]\n  geofences Geofence[]\n}\n\n// B3: the derived unique constraint name is 81 characters. PostgreSQL truncates\n// at 63 and so does Prisma; SQLAlchemy raises `IdentifierError` before emitting\n// any SQL, which fails the Alembic step outright.\nmodel TicketRequirementsOnDocuments {\n  documentId            String\n  documentRequirementId String\n  ticketId              String @db.Uuid\n  ticket                Ticket @relation(fields: [ticketId], references: [id])\n\n  @@id([documentId, documentRequirementId])\n  @@unique([documentId, documentRequirementId, ticketId])\n  @@map(\"ticket_requirements_on_documents\")\n}\n\n// Three more shapes, from the retest of the fix above. All three were\n// unreachable before \u2014 B2 crashed first \u2014 and none was in this schema, which is\n// the same reason the original five got through.\nmodel Geofence {\n  id String @id @default(uuid()) @db.Uuid\n\n  // B7: `@relation(map:)` is absent from the DMMF, like `@db.*`. Without lexing\n  // it the constraint is named after the table instead, and the bug is\n  // invisible except where `map:` is doing something \u2014 the only reason to write\n  // it. Alembic does not compare constraint names, so the gate stays quiet.\n  ticketId String @map(\"ticket_id\") @db.Uuid\n  ticket   Ticket @relation(fields: [ticketId], references: [id], map: \"custom_geofence_fk\")\n\n  scopeId   String   @map(\"scope_id\") @db.Uuid\n  createdAt DateTime @default(now()) @map(\"created_at\")\n\n  // B6: `sort: Desc` is in the DMMF and was simply dropped. On a composite\n  // index that is not cosmetic \u2014 (a ASC, b ASC) read backwards is (a DESC,\n  // b DESC), which serves neither `ORDER BY a, b DESC` nor `ORDER BY a DESC, b`.\n  @@index([scopeId, createdAt(sort: Desc)], map: \"idx_geofence_scope_created\")\n  @@map(\"geofences\")\n}\n\n// B3 remainder: the *foreign key* name also overflows 63 characters. The\n// original report's example was a `_key`; it became the test case and the\n// `_fkey` path was never exercised \u2014 the response's own lesson, recurring\n// inside its own fix.\nmodel JourneyOrderInstruction {\n  id        String                            @id @default(uuid()) @db.Uuid\n  geofences JourneyOrderInstructionGeofence[]\n\n  @@map(\"journey_order_instruction\")\n}\n\nmodel JourneyOrderInstructionGeofence {\n  id                        String                  @id @default(uuid()) @db.Uuid\n  journeyOrderInstructionId String                  @map(\"journey_order_instruction_id\") @db.Uuid\n  journeyOrderInstruction   JourneyOrderInstruction @relation(fields: [journeyOrderInstructionId], references: [id])\n\n  @@map(\"journey_order_instruction_geofences\")\n}\n",
  "datasources": [
   {
    "activeProvider": "postgresql",
@@ -185,6 +185,51 @@
      "isDefinedOnField": false,
      "model": "TicketRequirementsOnDocuments",
      "type": "unique"
+    },
+    {
+     "fields": [
+      {
+       "name": "id"
+      }
+     ],
+     "isDefinedOnField": true,
+     "model": "Geofence",
+     "type": "id"
+    },
+    {
+     "dbName": "idx_geofence_scope_created",
+     "fields": [
+      {
+       "name": "scopeId"
+      },
+      {
+       "name": "createdAt",
+       "sortOrder": "desc"
+      }
+     ],
+     "isDefinedOnField": false,
+     "model": "Geofence",
+     "type": "normal"
+    },
+    {
+     "fields": [
+      {
+       "name": "id"
+      }
+     ],
+     "isDefinedOnField": true,
+     "model": "JourneyOrderInstruction",
+     "type": "id"
+    },
+    {
+     "fields": [
+      {
+       "name": "id"
+      }
+     ],
+     "isDefinedOnField": true,
+     "model": "JourneyOrderInstructionGeofence",
+     "type": "id"
     }
    ],
    "models": [
@@ -906,6 +951,22 @@
        "relationName": "TicketToTicketRequirementsOnDocuments",
        "relationToFields": [],
        "type": "TicketRequirementsOnDocuments"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "geofences",
+       "relationFromFields": [],
+       "relationName": "GeofenceToTicket",
+       "relationToFields": [],
+       "type": "Geofence"
       }
      ],
      "isGenerated": false,
@@ -1003,6 +1064,203 @@
        "name": null
       }
      ]
+    },
+    {
+     "dbName": "geofences",
+     "fields": [
+      {
+       "default": {
+        "args": [],
+        "name": "uuid(4)"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": true,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "id",
+       "type": "String"
+      },
+      {
+       "dbName": "ticket_id",
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": true,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "ticketId",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "ticket",
+       "relationFromFields": [
+        "ticketId"
+       ],
+       "relationName": "GeofenceToTicket",
+       "relationToFields": [
+        "id"
+       ],
+       "type": "Ticket"
+      },
+      {
+       "dbName": "scope_id",
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "scopeId",
+       "type": "String"
+      },
+      {
+       "dbName": "created_at",
+       "default": {
+        "args": [],
+        "name": "now"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "createdAt",
+       "type": "DateTime"
+      }
+     ],
+     "isGenerated": false,
+     "name": "Geofence",
+     "primaryKey": null,
+     "uniqueFields": [],
+     "uniqueIndexes": []
+    },
+    {
+     "dbName": "journey_order_instruction",
+     "fields": [
+      {
+       "default": {
+        "args": [],
+        "name": "uuid(4)"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": true,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "id",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "geofences",
+       "relationFromFields": [],
+       "relationName": "JourneyOrderInstructionToJourneyOrderInstructionGeofence",
+       "relationToFields": [],
+       "type": "JourneyOrderInstructionGeofence"
+      }
+     ],
+     "isGenerated": false,
+     "name": "JourneyOrderInstruction",
+     "primaryKey": null,
+     "uniqueFields": [],
+     "uniqueIndexes": []
+    },
+    {
+     "dbName": "journey_order_instruction_geofences",
+     "fields": [
+      {
+       "default": {
+        "args": [],
+        "name": "uuid(4)"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": true,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "id",
+       "type": "String"
+      },
+      {
+       "dbName": "journey_order_instruction_id",
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": true,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "journeyOrderInstructionId",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "journeyOrderInstruction",
+       "relationFromFields": [
+        "journeyOrderInstructionId"
+       ],
+       "relationName": "JourneyOrderInstructionToJourneyOrderInstructionGeofence",
+       "relationToFields": [
+        "id"
+       ],
+       "type": "JourneyOrderInstruction"
+      }
+     ],
+     "isGenerated": false,
+     "name": "JourneyOrderInstructionGeofence",
+     "primaryKey": null,
+     "uniqueFields": [],
+     "uniqueIndexes": []
     }
    ],
    "types": []

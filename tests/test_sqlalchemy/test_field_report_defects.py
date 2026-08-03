@@ -5,10 +5,14 @@ Reported against a 182-model production schema after following
 crash at Phase 2 or — worse, once — a database that passed the runbook's own
 Alembic gate and then rejected writes.
 
-The reference schema in `data/dmmf_wire_sample.prisma` now carries all five
-shapes, so `test_ddl_equivalence.py` covers them against a real `prisma db push`
-too. These name them individually so a failure says which defect came back
-rather than just that some DDL moved.
+B6, B7 and the B3 remainder came from the **retest** of the fix: three more
+shapes the reference schema did not contain, found the same way — by running a
+real schema against a real database.
+
+The reference schema in `data/dmmf_wire_sample.prisma` now carries all of them,
+so `test_ddl_equivalence.py` covers them against a real `prisma db push` too.
+These name them individually so a failure says which defect came back rather
+than just that some DDL moved.
 
 The root cause was the same for all five: the reference schema exercised none of
 these shapes. It was recorded from the pinned CLI, so the DMMF was real — but a
@@ -21,6 +25,7 @@ from typing import Any, Dict
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.schema import CreateIndex
 from sqlalchemy.dialects import postgresql
 
 from prisma.generator.models import MAX_IDENTIFIER_LENGTH, truncate_identifier
@@ -204,3 +209,67 @@ def test_b1_unannotated_columns_keep_the_default_mapping(metadata: sa.MetaData) 
     """The lexer must not attach an annotation to the wrong field."""
     assert isinstance(metadata.tables['Ticket'].c['ticketNumber'].type, sa.Integer)
     assert isinstance(metadata.tables['accounts'].c['email'].type, sa.Text)
+
+
+# -- B3 remainder: foreign key names also overflow ----------------------------
+
+
+def test_b3_foreign_key_names_are_truncated_too(metadata: sa.MetaData) -> None:
+    """The first fix truncated uniques and indexes but not foreign keys.
+
+    The original report's example was a `_key`, it became the test case, and the
+    `_fkey` path was never exercised — the same "the fixture only tests what it
+    contains" failure, recurring inside its own fix. 7 of the reporter's 10 long
+    identifiers were foreign keys and still raised `IdentifierError`.
+    """
+    constraint = next(
+        c
+        for c in metadata.tables['journey_order_instruction_geofences'].constraints
+        if isinstance(c, sa.ForeignKeyConstraint)
+    )
+    assert constraint.name == 'journey_order_instruction_geofences_journey_order_instruct_fkey'
+    assert len(str(constraint.name)) == MAX_IDENTIFIER_LENGTH
+
+
+# -- B6: `sort: Desc` dropped from indexes ------------------------------------
+
+
+def test_b6_descending_index_column_keeps_its_direction(metadata: sa.MetaData) -> None:
+    """`sortOrder` was in the DMMF all along and simply ignored.
+
+    On a composite index this is not cosmetic. `(a ASC, b ASC)` scanned backwards
+    yields `(a DESC, b DESC)`, which serves neither `ORDER BY a, b DESC` nor
+    `ORDER BY a DESC, b` — so the index the schema asked for cannot be
+    substituted by the one that would be built, and those queries fall back to a
+    sort node. Silent to the application, visible later as a slow query.
+    """
+    index = next(i for i in metadata.tables['geofences'].indexes if i.name == 'idx_geofence_scope_created')
+    rendered = str(CreateIndex(index).compile(dialect=postgresql.dialect()))
+    assert 'created_at DESC' in rendered
+    assert 'scope_id, created_at DESC' in rendered
+
+
+def test_b6_ascending_columns_are_left_alone(metadata: sa.MetaData) -> None:
+    index = next(i for i in metadata.tables['accounts'].indexes if i.name == 'account_email_created_idx')
+    assert 'DESC' not in str(CreateIndex(index).compile(dialect=postgresql.dialect()))
+
+
+# -- B7: `@relation(map:)` ignored --------------------------------------------
+
+
+def test_b7_relation_map_names_the_constraint(metadata: sa.MetaData) -> None:
+    """Absent from the DMMF, like `@db.*`, so it has to be lexed.
+
+    Invisible except where `map:` is doing something — which is the only reason
+    anyone writes it — and Alembic does not compare constraint names, so the
+    gate stays quiet. The same silent class as B5.
+    """
+    names = {c.name for c in metadata.tables['geofences'].constraints if isinstance(c, sa.ForeignKeyConstraint)}
+    assert 'custom_geofence_fk' in names
+    assert 'geofences_ticket_id_fkey' not in names, 'derived from @@map instead of honouring map:'
+
+
+def test_b7_unmapped_relations_still_derive_their_name(metadata: sa.MetaData) -> None:
+    """The lexer must not attach a name to the wrong relation."""
+    names = {c.name for c in metadata.tables['Entry'].constraints if isinstance(c, sa.ForeignKeyConstraint)}
+    assert names == {'Entry_accountId_fkey', 'Entry_parentId_fkey'}

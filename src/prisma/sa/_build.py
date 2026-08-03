@@ -16,7 +16,7 @@ server defaults.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional
 
 import sqlalchemy as sa
 
@@ -120,10 +120,33 @@ def _build_table(
         kwargs: Dict[str, Any] = {}
         if index['algorithm']:
             kwargs[f'{provider}_using'] = index['algorithm'].lower()
-        sa.Index(index['name'], *[table.c[column] for column in index['columns']], **kwargs)
+        sa.Index(index['name'], *_index_expressions(table, index), **kwargs)
 
     _own_sequences(table, spec)
     return table
+
+
+def _index_expressions(table: sa.Table, index: Mapping[str, Any]) -> List[Any]:
+    """Index columns, carrying `sort: Desc` through as `column.desc()`.
+
+    Dropping the direction is nearly free on a single-column index — PostgreSQL
+    scans backwards — but not on a composite one: `(a ASC, b ASC)` read backwards
+    is `(a DESC, b DESC)`, which serves neither `ORDER BY a, b DESC` nor
+    `ORDER BY a DESC, b`. The index the schema asked for cannot be substituted by
+    the one that would be built, so the query falls back to a sort node. Silent
+    to the application, visible later as a slow query.
+    """
+    # `columns` and `fields` are built together and stay parallel: one entry per
+    # index member, in declaration order.
+    orders = [(field.get('sort_order') or '').lower() for field in index['fields']]
+    expressions: List[Any] = []
+
+    for position, column_name in enumerate(index['columns']):
+        column = table.c[column_name]
+        descending = position < len(orders) and orders[position] == 'desc'
+        expressions.append(column.desc() if descending else column)
+
+    return expressions
 
 
 def _build_column(
@@ -324,7 +347,7 @@ def _add_foreign_keys(
             sa.ForeignKeyConstraint(
                 relation['fk_columns'],
                 [f'{target["table"]}.{column}' for column in relation['referenced_columns']],
-                name=_fk_name(spec['table'], relation['fk_columns']),
+                name=relation['fk_name'],
                 ondelete=_on_delete(relation),
                 onupdate='CASCADE',
             )
@@ -346,10 +369,6 @@ def _on_delete(relation: Mapping[str, Any]) -> str:
         return _REFERENTIAL_ACTIONS[declared]
     except KeyError:
         raise NotImplementedError(f'Unhandled referential action: {declared}') from None
-
-
-def _fk_name(table: str, columns: Sequence[str]) -> str:
-    return '_'.join([table, *columns, 'fkey'])
 
 
 def _build_join_table(

@@ -454,6 +454,14 @@ Pin the same version in `package.json`, and use `python -m prisma` rather than
 
 ## Changelog
 
+**1.2.0** — three more from the retest of 1.1.0, on the same schema.
+
+| | fixed |
+| --- | --- |
+| foreign key names not truncated at 63 characters — the half of B3 the first fix missed | ✅ |
+| `sort: Desc` dropped from index columns, changing which queries the index can serve | ✅ |
+| `@relation(map: "…")` ignored, so the constraint took a derived name | ✅ |
+
 **1.1.0** — five defects fixed from a field report against a 182-model
 production schema. All five are now covered by the reference schema and the
 DDL-equivalence gate.

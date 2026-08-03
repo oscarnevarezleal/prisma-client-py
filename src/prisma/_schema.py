@@ -133,9 +133,14 @@ class RelationSchema(TypedDict, total=False):
     #: True when every foreign key column is NOT NULL, i.e. the relation is
     #: mandatory and `disconnect`/`set`-that-drops must raise P2014
     fk_required: bool
-    #: ``None`` means "Prisma's default for this arity" — Cascade when required,
+    #: ``None`` means "Prisma's default for this arity" — Restrict when required,
     #: SetNull when optional — not "no action"
     on_delete: Optional[str]
+    #: The foreign key constraint name, on the owning side; ``None`` otherwise.
+    #: ``@relation(map:)`` when set — Prisma does not send that in the DMMF, so it
+    #: is lexed from the schema text — else ``<table>_<columns>_fkey`` truncated
+    #: to 63 characters the way Prisma truncates it.
+    fk_name: Optional[str]
     # many-to-many only
     join_table: str
     join_self_column: Optional[str]
@@ -188,6 +193,9 @@ class IndexSchema(TypedDict):
     algorithm: Optional[str]
     clustered: Optional[bool]
     columns: List[str]
+    #: parallel to ``columns``, one entry per index member. Carries the per-column
+    #: sort direction from ``@@index([a, b(sort: Desc)])``; dropping it silently
+    #: changes which queries the index can serve.
     fields: List[IndexFieldSchema]
 
 

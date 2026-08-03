@@ -552,6 +552,10 @@ wrong, so the code raises or flags instead:
 | any provider but PostgreSQL | type table not verified against a real `db push` | `UnsupportedProviderError` naming the provider |
 | an unmapped `@db.*` annotation | no verified type for it | raises naming the annotation, rather than falling back to the default type |
 
+Three annotations Prisma does not send in the DMMF are recovered by lexing the
+raw schema text (`generator/_native_types.py`): `@db.*`, and `@relation(map:)`.
+`relationMode` is the remaining one and is recoverable the same way.
+
 ---
 
 ## 10. Open decision

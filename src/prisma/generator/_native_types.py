@@ -1,4 +1,8 @@
-"""Recover `@db.*` native type annotations from the raw schema text.
+"""Recover annotations Prisma does not put in the DMMF from the raw schema text.
+
+Two of them so far: `@db.*` native types and `@relation(map:)` constraint names.
+Both are verified absent from the generator payload, and both change the
+database — so both have to be lexed or silently lost.
 
 Prisma does not send these through the generator protocol. Verified, not
 assumed: a schema using `@db.Uuid` and `@db.VarChar(255)` produces a DMMF
@@ -23,7 +27,7 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Tuple, Optional
 
-__all__ = ('parse_native_types', 'NativeType')
+__all__ = ('parse_native_types', 'parse_relation_maps', 'NativeType')
 
 #: (type name, arguments) — e.g. `@db.VarChar(255)` -> ('VarChar', ['255'])
 NativeType = Tuple[str, List[str]]
@@ -95,3 +99,48 @@ def _parse_annotation(rest: str) -> Optional[NativeType]:
         return (match.group('type'), [])
 
     return (match.group('type'), [arg.strip() for arg in raw_args.split(',') if arg.strip()])
+
+
+# `@relation(..., map: "name")`. The constraint name Prisma gives the foreign
+# key. Absent from the DMMF entirely — verified — so without this the name is
+# derived from the table and a schema that bothered to set `map:` gets a
+# different constraint. The bug is invisible except where `map:` is doing
+# something, which is the only reason anyone writes it.
+_RELATION_MAP = re.compile(r'@relation\s*\((?P<args>[^)]*)\)')
+_MAP_ARG = re.compile(r'\bmap\s*:\s*"(?P<name>[^"]*)"')
+
+
+def parse_relation_maps(schema: str) -> Dict[str, Dict[str, str]]:
+    """`{model name: {field name: constraint name}}` for every `@relation(map:)`.
+
+    Only relation fields can carry it, and only the side that owns the foreign
+    key, so a hit on any other field would be a lexing error rather than a
+    finding.
+    """
+    text = _strip_comments(schema)
+    out: Dict[str, Dict[str, str]] = {}
+
+    for block in _MODEL_BLOCK.finditer(text):
+        fields: Dict[str, str] = {}
+
+        for line in block.group('body').splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('@@'):
+                continue
+
+            match = _FIELD_LINE.match(line)
+            if match is None:
+                continue
+
+            relation = _RELATION_MAP.search(match.group('rest'))
+            if relation is None:
+                continue
+
+            mapped = _MAP_ARG.search(relation.group('args'))
+            if mapped is not None:
+                fields[match.group('name')] = mapped.group('name')
+
+        if fields:
+            out[block.group('name')] = fields
+
+    return out

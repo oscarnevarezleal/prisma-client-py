@@ -56,7 +56,7 @@ from .._compat import (
 )
 from .._constants import QUERY_BUILDER_ALIASES
 from ._dsl_parser import parse_schema_dsl
-from ._native_types import NativeType, parse_native_types
+from ._native_types import NativeType, parse_native_types, parse_relation_maps
 
 __all__ = (
     'AnyData',
@@ -241,15 +241,29 @@ def build_schema_metadata(datamodel: 'Datamodel', schema_text: Optional[str] = N
     """
     schema: Dict[str, Any] = {}
     native_types = parse_native_types(schema_text) if schema_text else {}
+    relation_maps = parse_relation_maps(schema_text) if schema_text else {}
 
     for model in datamodel.models:
         model_natives = native_types.get(model.name, {})
+        model_relation_maps = relation_maps.get(model.name, {})
         fields: Dict[str, Any] = {}
         relations: Dict[str, Any] = {}
 
         for field in model.all_fields:
             if field.is_relational:
-                relations[field.name] = model.relation_metadata(field)
+                meta = model.relation_metadata(field)
+                # The foreign key constraint name. `@relation(map:)` wins; Prisma
+                # does not send it in the DMMF, so it comes from the lexer. The
+                # derived fallback must be truncated: PostgreSQL caps identifiers
+                # at 63 and SQLAlchemy raises `IdentifierError` before emitting
+                # any SQL, which fails the migration outright.
+                if meta['owner']:
+                    meta['fk_name'] = model_relation_maps.get(field.name) or truncate_identifier(
+                        '_'.join([model.table_name, *meta['fk_columns']]), '_fkey'
+                    )
+                else:
+                    meta['fk_name'] = None
+                relations[field.name] = meta
                 continue
 
             fields[field.name] = {

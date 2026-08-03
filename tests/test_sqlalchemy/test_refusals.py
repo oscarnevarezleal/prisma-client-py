@@ -170,6 +170,8 @@ def relation(**overrides: Any) -> Dict[str, Any]:
         'referenced_columns': ['id'],
         'fk_required': False,
         'on_delete': None,
+        'fk_name': 'Thing_parentId_fkey',
+        'join_ambiguous': False,
     }
     base.update(overrides)
     return base
