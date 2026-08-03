@@ -1,0 +1,127 @@
+{
+  "history": [
+    {
+      "iteration": 0,
+      "name": "baseline",
+      "verdict": "ACCEPT",
+      "options": {},
+      "unified": false,
+      "note": "",
+      "rss_final_mb": 334.8,
+      "import_total_ms": 3911.5,
+      "connect_total_ms": 167.0,
+      "query_total_ms": 29.07,
+      "composite": 282.37
+    },
+    {
+      "iteration": 1,
+      "name": "recursive-types",
+      "verdict": "ACCEPT",
+      "options": {
+        "recursive_type_depth": "-1"
+      },
+      "unified": false,
+      "note": "composite -39.9%",
+      "rss_final_mb": 142.3,
+      "import_total_ms": 1358.7,
+      "connect_total_ms": 151.6,
+      "query_total_ms": 28.3,
+      "composite": 169.71
+    },
+    {
+      "iteration": 2,
+      "name": "minimal-runtime",
+      "verdict": "ACCEPT",
+      "options": {
+        "recursive_type_depth": "-1",
+        "minimalRuntime": "true"
+      },
+      "unified": false,
+      "note": "composite -30.3%",
+      "rss_final_mb": 78.8,
+      "import_total_ms": 653.2,
+      "connect_total_ms": 141.0,
+      "query_total_ms": 26.92,
+      "composite": 118.23
+    },
+    {
+      "iteration": 3,
+      "name": "unified-package",
+      "verdict": "ACCEPT",
+      "options": {
+        "recursive_type_depth": "-1",
+        "minimalRuntime": "true"
+      },
+      "unified": true,
+      "note": "composite -15.0%",
+      "rss_final_mb": 64.8,
+      "import_total_ms": 425.2,
+      "connect_total_ms": 137.3,
+      "query_total_ms": 26.94,
+      "composite": 100.48
+    },
+    {
+      "iteration": 4,
+      "name": "separate-model-files",
+      "verdict": "ACCEPT",
+      "options": {
+        "recursive_type_depth": "-1",
+        "minimalRuntime": "true",
+        "separateModelFiles": "true"
+      },
+      "unified": true,
+      "note": "composite -6.1%",
+      "rss_final_mb": 64.1,
+      "import_total_ms": 315.0,
+      "connect_total_ms": 145.9,
+      "query_total_ms": 26.95,
+      "composite": 94.39
+    },
+    {
+      "iteration": 5,
+      "name": "recursive-validation-models",
+      "verdict": "REJECT",
+      "options": {
+        "recursive_type_depth": "-1",
+        "minimalRuntime": "true",
+        "separateModelFiles": "true",
+        "recursiveValidationModels": "true"
+      },
+      "unified": true,
+      "note": "improvement -0.93% < threshold",
+      "rss_final_mb": 64.0,
+      "import_total_ms": 347.7,
+      "connect_total_ms": 136.2,
+      "query_total_ms": 27.18,
+      "composite": 95.27
+    },
+    {
+      "iteration": 6,
+      "name": "scalar-fields-only",
+      "verdict": "REJECT",
+      "options": {
+        "recursive_type_depth": "-1",
+        "minimalRuntime": "true",
+        "separateModelFiles": "true",
+        "scalarFieldsOnly": "true"
+      },
+      "unified": true,
+      "note": "failed: 43467c6/scratchpad/pglab/pkg_uni/_builder.py\", line 249, in get_relational_model\n    raise UnknownRelationalFieldError(model=current_model.__name__, field=field) from exc\npkg_uni.errors.UnknownRelationalFieldError: Field: \"author\" either does not exist or is not a relational field on the Post model\n"
+    }
+  ],
+  "summary": {
+    "final_options": {
+      "recursive_type_depth": "-1",
+      "minimalRuntime": "true",
+      "separateModelFiles": "true"
+    },
+    "unified": true,
+    "final_scores": {
+      "rss_final_mb": 64.1,
+      "import_total_ms": 315.0,
+      "connect_total_ms": 145.9,
+      "query_total_ms": 26.95,
+      "composite": 94.39
+    }
+  }
+}
