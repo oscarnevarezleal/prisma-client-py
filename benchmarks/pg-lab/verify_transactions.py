@@ -475,35 +475,47 @@ def build_cases(  # noqa: C901 - a flat table of cases, not a branchy function
             return timeouts(c)
 
     def prisma_pool_exhausted() -> Any:
-        managers = []
+        """`max_wait` bounds how long a `tx()` waits for a free connection.
+
+        The engine's pool is finite, so opening transactions without closing
+        them eventually has nowhere to put the next one. `max_wait` is what
+        turns that into a refusal (P2028) instead of a hang.
+        """
+        managers: List[Any] = []
+
+        def open_them_all() -> None:
+            for _ in range(POOL_ATTEMPTS):
+                manager = db.tx(
+                    max_wait=datetime.timedelta(milliseconds=200),
+                    timeout=datetime.timedelta(milliseconds=20000),
+                )
+                manager.start()
+                managers.append(manager)
+
         try:
-            outcome = refused(
-                lambda: [
-                    managers.append(started)
-                    for started in (
-                        _start(db, managers) for _ in range(40)  # noqa: B007
-                    )
-                ]
-            )
+            return refused(open_them_all)[0]
         finally:
             for manager in managers:
-                try:
-                    manager.rollback()
-                except Exception:  # noqa: BLE001 - best-effort cleanup
-                    pass
-        return outcome[0]
+                manager.rollback()
 
     def alchemy_pool_exhausted() -> Any:
+        """`pool_timeout` is the same bound on the same wait."""
         small = sa.create_engine(engine.url, pool_size=2, max_overflow=0, pool_timeout=0.2)
         held: List[sa.Connection] = []
+
+        def open_them_all() -> None:
+            for _ in range(POOL_ATTEMPTS):
+                c = small.connect()
+                c.begin()
+                held.append(c)
+
         try:
-            outcome = refused(lambda: [held.append(_open(small)) for _ in range(40)])
+            return refused(open_them_all)[0]
         finally:
             for c in held:
                 c.rollback()
                 c.close()
             small.dispose()
-        return outcome[0]
 
     def prisma_batch() -> None:
         with db.batch_() as batcher:
@@ -834,21 +846,6 @@ def build_cases(  # noqa: C901 - a flat table of cases, not a branchy function
         ),
     ]
     return cases
-
-
-def _start(db: Any, managers: List[Any]) -> Any:
-    manager = db.tx(
-        max_wait=datetime.timedelta(milliseconds=200),
-        timeout=datetime.timedelta(milliseconds=20000),
-    )
-    manager.start()
-    return manager
-
-
-def _open(engine: sa.Engine) -> sa.Connection:
-    conn = engine.connect()
-    conn.begin()
-    return conn
 
 
 # ---------------------------------------------------------------------------
