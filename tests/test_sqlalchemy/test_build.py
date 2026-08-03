@@ -174,9 +174,11 @@ def test_plain_indexes(metadata: sa.MetaData) -> None:
 
 
 def fk(metadata: sa.MetaData, table_name: str, name: str) -> sa.ForeignKeyConstraint:
-    return next(
+    found = [
         c for c in table(metadata, table_name).constraints if isinstance(c, sa.ForeignKeyConstraint) and c.name == name
-    )
+    ]
+    assert found, f'{table_name} has no foreign key named {name!r}'
+    return found[0]
 
 
 def test_declared_on_delete(metadata: sa.MetaData) -> None:

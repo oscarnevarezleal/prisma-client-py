@@ -54,8 +54,9 @@ def wire_keys(objects: List[Dict[str, Any]]) -> Set[str]:
 
 @pytest.fixture(scope='module', name='wire')
 def wire_fixture() -> Dict[str, Any]:
-    if not FIXTURE.exists():
-        pytest.skip(f'wire sample not recorded at {FIXTURE}')
+    # the sample is a committed artifact, not something a run produces, so a
+    # missing one is a broken checkout rather than a reason to skip
+    assert FIXTURE.exists(), f'wire sample not recorded at {FIXTURE}'
     return cast('Dict[str, Any]', json.loads(FIXTURE.read_text()))
 
 
@@ -80,8 +81,9 @@ def test_field_covers_wire(wire: Dict[str, Any]) -> None:
 
 def test_index_covers_wire(wire: Dict[str, Any]) -> None:
     indexes = wire['dmmf']['datamodel'].get('indexes', [])
-    if not indexes:
-        pytest.skip('sample schema declares no indexes')
+    # asserted rather than skipped: a re-record that loses `@@index` is exactly
+    # the regression this module exists to catch, and a skip would hide it
+    assert indexes, 'sample schema declares no indexes'
     missing = wire_keys(indexes) - aliases(Index)
     assert not missing, f'Index drops wire keys: {sorted(missing)}'
 
@@ -97,8 +99,7 @@ def test_datasource_covers_wire(wire: Dict[str, Any]) -> None:
 
 def test_enum_covers_wire(wire: Dict[str, Any]) -> None:
     enums = wire['dmmf']['datamodel'].get('enums', [])
-    if not enums:
-        pytest.skip('sample schema declares no enums')
+    assert enums, 'sample schema declares no enums'
     missing = wire_keys(enums) - aliases(Enum)
     assert not missing, f'Enum drops wire keys: {sorted(missing)}'
 
@@ -107,14 +108,14 @@ def test_constraint_models_cover_wire(wire: Dict[str, Any]) -> None:
     models = wire['dmmf']['datamodel']['models']
 
     pks = [m['primaryKey'] for m in models if m.get('primaryKey')]
-    if pks:
-        missing = wire_keys(pks) - aliases(PrimaryKey)
-        assert not missing, f'PrimaryKey drops wire keys: {sorted(missing)}'
+    assert pks, 'sample schema declares no compound primary key'
+    missing = wire_keys(pks) - aliases(PrimaryKey)
+    assert not missing, f'PrimaryKey drops wire keys: {sorted(missing)}'
 
     uniques = [u for m in models for u in m.get('uniqueIndexes', [])]
-    if uniques:
-        missing = wire_keys(uniques) - aliases(UniqueIndex)
-        assert not missing, f'UniqueIndex drops wire keys: {sorted(missing)}'
+    assert uniques, 'sample schema declares no unique index'
+    missing = wire_keys(uniques) - aliases(UniqueIndex)
+    assert not missing, f'UniqueIndex drops wire keys: {sorted(missing)}'
 
 
 def test_indexes_are_actually_parsed(wire: Dict[str, Any]) -> None:
@@ -125,7 +126,7 @@ def test_indexes_are_actually_parsed(wire: Dict[str, Any]) -> None:
     """
     datamodel = model_parse_strict(Datamodel, wire['dmmf']['datamodel'])
     raw = wire['dmmf']['datamodel'].get('indexes', [])
+    assert raw, 'sample schema declares no indexes'
     assert len(datamodel.indexes) == len(raw)
-    if raw:
-        assert datamodel.indexes[0].model == raw[0]['model']
-        assert [f.name for f in datamodel.indexes[0].fields] == [f['name'] for f in raw[0]['fields']]
+    assert datamodel.indexes[0].model == raw[0]['model']
+    assert [f.name for f in datamodel.indexes[0].fields] == [f['name'] for f in raw[0]['fields']]

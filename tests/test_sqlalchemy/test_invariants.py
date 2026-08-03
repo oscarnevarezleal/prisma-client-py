@@ -82,9 +82,12 @@ def test_both_sides_of_a_relation_agree(generated: Dict[str, Any]) -> None:
     schema = generated['schema']
     for model, spec in schema.items():
         for name, relation in spec['relations'].items():
+            # Prisma will not validate a schema whose relation is declared on
+            # only one side, so a missing back reference means the derivation
+            # lost it — which is the bug this test exists to catch, not a case
+            # to skip past.
             back = relation['back_field']
-            if back is None:
-                continue
+            assert back is not None, f'{model}.{name} has no back reference'
 
             other = schema[relation['to']]['relations'][back]
             assert other['to'] == model, f'{model}.{name} <-> {relation["to"]}.{back} do not point at each other'

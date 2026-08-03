@@ -235,13 +235,21 @@ def test_b3_foreign_key_names_are_truncated_too(metadata: sa.MetaData) -> None:
     contains" failure, recurring inside its own fix. 7 of the reporter's 10 long
     identifiers were foreign keys and still raised `IdentifierError`.
     """
-    constraint = next(
+    constraints = [
         c
         for c in metadata.tables['journey_order_instruction_geofences'].constraints
         if isinstance(c, sa.ForeignKeyConstraint)
-    )
+    ]
+    assert constraints, 'journey_order_instruction_geofences has no foreign key'
+    constraint = constraints[0]
     assert constraint.name == 'journey_order_instruction_geofences_journey_order_instruct_fkey'
     assert len(str(constraint.name)) == MAX_IDENTIFIER_LENGTH
+
+
+def _index_named(metadata: sa.MetaData, table: str, name: str) -> sa.Index:
+    found = [i for i in metadata.tables[table].indexes if i.name == name]
+    assert found, f'{table} has no index named {name!r}'
+    return found[0]
 
 
 # -- B6: `sort: Desc` dropped from indexes ------------------------------------
@@ -256,14 +264,14 @@ def test_b6_descending_index_column_keeps_its_direction(metadata: sa.MetaData) -
     substituted by the one that would be built, and those queries fall back to a
     sort node. Silent to the application, visible later as a slow query.
     """
-    index = next(i for i in metadata.tables['geofences'].indexes if i.name == 'idx_geofence_scope_created')
+    index = _index_named(metadata, 'geofences', 'idx_geofence_scope_created')
     rendered = str(CreateIndex(index).compile(dialect=DIALECT))
     assert 'created_at DESC' in rendered
     assert 'scope_id, created_at DESC' in rendered
 
 
 def test_b6_ascending_columns_are_left_alone(metadata: sa.MetaData) -> None:
-    index = next(i for i in metadata.tables['accounts'].indexes if i.name == 'account_email_created_idx')
+    index = _index_named(metadata, 'accounts', 'account_email_created_idx')
     assert 'DESC' not in str(CreateIndex(index).compile(dialect=DIALECT))
 
 

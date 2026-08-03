@@ -180,6 +180,11 @@ class UniqueSchema(TypedDict):
     db_name: str
     fields: List[str]
     columns: List[str]
+    #: True when the constraint came from a field-level ``@unique`` rather than
+    #: a model-level ``@@unique``. A single-column ``@@unique`` is otherwise
+    #: indistinguishable from ``@unique``, and only the latter is addressable as
+    #: a bare ``where={'email': ...}``.
+    is_defined_on_field: bool
 
 
 class IndexFieldSchema(TypedDict):

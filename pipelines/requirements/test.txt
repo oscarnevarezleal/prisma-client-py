@@ -6,6 +6,9 @@
 # `prisma.sa` is optional at runtime, but tests/test_sqlalchemy `importorskip`s it —
 # without this the whole SQLAlchemy suite silently skips in CI
 -r deps/sqlalchemy.txt
+# the driver behind `postgresql+psycopg://`, which the tests that execute against
+# a real database use; without it they error at fixture setup rather than skip
+-r deps/psycopg.txt
 pytest-sugar
 mock==5.1.0
 pytest-subprocess==1.5.2

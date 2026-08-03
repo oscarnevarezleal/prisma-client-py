@@ -24,7 +24,7 @@ from pathlib import Path
 from contextlib import contextmanager
 
 from prisma._compat import model_parse_strict
-from prisma.generator.models import Config, Datamodel, data_ctx
+from prisma.generator.models import Config, Datamodel, data_ctx, config_ctx
 
 SAMPLE = Path(__file__).parent / 'test_generation' / 'data' / 'dmmf_wire_sample.json'
 
@@ -68,15 +68,21 @@ def schema_text() -> str:
 def loaded_datamodel() -> Iterator[Datamodel]:
     """Parse the sample and publish it to the generator's context vars."""
     # `Decimal` fields refuse to validate without the experimental flag, and
-    # constructing a Config is what publishes it to the context.
-    Config(enable_experimental_decimal=True)
-
-    datamodel = model_parse_strict(Datamodel, read_wire_sample()['dmmf']['datamodel'])
-
-    # `_FakeData` is deliberately only the slice of `GenericData` the derivation
-    # reads (see its docstring), so it cannot satisfy the context var's type.
-    token = data_ctx.set(cast(Any, _FakeData(datamodel)))
+    # constructing a Config is what publishes it to the context. Constructing it
+    # is also all it takes: `Config.__init__` sets `config_ctx` for the rest of
+    # the process, so without an explicit reset the flag would leak into every
+    # later test and hide a genuinely missing one.
+    config_token = config_ctx.set(Config(enable_experimental_decimal=True))
     try:
-        yield datamodel
+        datamodel = model_parse_strict(Datamodel, read_wire_sample()['dmmf']['datamodel'])
+
+        # `_FakeData` is deliberately only the slice of `GenericData` the
+        # derivation reads (see its docstring), so it cannot satisfy the context
+        # var's type.
+        token = data_ctx.set(cast(Any, _FakeData(datamodel)))
+        try:
+            yield datamodel
+        finally:
+            data_ctx.reset(token)
     finally:
-        data_ctx.reset(token)
+        config_ctx.reset(config_token)
