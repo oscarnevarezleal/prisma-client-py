@@ -1,0 +1,78 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("BENCH_DATABASE_URL")
+}
+
+generator client {
+  provider                    = "python -m prisma"
+  interface                   = "asyncio"
+  output                      = "./client"
+  enable_experimental_decimal = true
+  schemaMetadata              = true
+}
+
+enum Role {
+  OWNER
+  ADMIN  @map("administrator")
+  VIEWER
+}
+
+model Account {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  slug      String   @map("url_slug")
+  role      Role     @default(VIEWER)
+  balance   Decimal
+  payload   Json?
+  secret    Bytes?
+  visits    BigInt   @default(0)
+  tags      String[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  posts     Entry[]
+  profile   Profile?
+
+  @@unique([slug, role], name: "slug_role")
+  @@index([email, createdAt], map: "account_email_created_idx")
+  @@map("accounts")
+}
+
+model Entry {
+  id        String  @id @default(cuid())
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  title     String
+  parentId  String?
+  parent    Entry?  @relation("tree", fields: [parentId], references: [id])
+  children  Entry[] @relation("tree")
+  labels    Label[]
+
+  @@index([accountId])
+}
+
+// The FK lives on the *other* side of a to-one relation, which compiles
+// differently to `Entry.account` even though both are `to-one`.
+model Profile {
+  id        Int     @id @default(autoincrement())
+  accountId String  @unique @map("account_id")
+  account   Account @relation(fields: [accountId], references: [id])
+  bio       String?
+}
+
+model Label {
+  id      Int     @id @default(autoincrement())
+  name    String  @map("label_name")
+  entries Entry[]
+  related Label[] @relation("similar")
+  similar Label[] @relation("similar")
+
+  @@map("labels")
+}
+
+model Composite {
+  left  String
+  right String
+  note  String?
+
+  @@id([left, right])
+}

@@ -19,5 +19,23 @@ RELATIONAL_FIELD_MAPPINGS: dict[str, dict[str, str]] = {
     },
     {% endfor %}
 }
+{% if generator.config.schema_metadata %}
+
+# The physical database schema, reconstructed from the DMMF at generation time.
+#
+# The binary query engine derives all of this itself from schema.prisma, so the
+# generated client has never carried it. A client that builds SQL directly
+# cannot name a single table without it. See `prisma._schema` for the accessors
+# and for what each key means.
+DATABASE_PROVIDER: str = '{{ datasources[0].active_provider }}'
+
+SCHEMA: dict[str, dict[str, object]] = (
+{{ as_literal(build_schema_metadata(dmmf.datamodel)) }}
+)
+
+ENUM_SCHEMA: dict[str, dict[str, object]] = (
+{{ as_literal(build_enum_metadata(dmmf.datamodel)) }}
+)
+{% endif %}
 
 # fmt: on

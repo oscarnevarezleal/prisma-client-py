@@ -80,6 +80,19 @@ these; `extra='ignore'` discards them:
 All additive and non-breaking. `relationMode` is genuinely absent from the
 generator payload and must be lexed out of the raw schema text.
 
+**Status: closed** (`df647c0`), with one correction to the table above. G2 is
+not a case of us discarding what Prisma sends — there are **zero `nativeType`
+keys in the entire wire payload**, verified against a schema using
+`@db.VarChar(255)` and `@db.Decimal(12,2)`. The field is modelled so a future
+Prisma release is picked up automatically, but today it is `None` for every
+field and `@db.*` is only recoverable by lexing the raw schema text, which
+`GenericData.datamodel` does carry. `relationMode` is in the same position and
+is **still open**.
+
+`tests/test_generation/test_dmmf_completeness.py` now asserts that the modelled
+field set covers the wire key set, so the next such gap fails a test instead of
+surfacing months later as a mysterious schema diff.
+
 ### 2.2 Runtime metadata is insufficient
 
 `metadata.py.jinja` emits only `PRISMA_MODELS` and `RELATIONAL_FIELD_MAPPINGS`
@@ -92,6 +105,33 @@ flag, primary key (incl. compound), unique constraints with names; and per
 relation: shape (S1–S4 below), FK columns, referenced columns, relation name,
 and **FK nullability** — which is what decides whether `disconnect`/`set` are
 legal at all. It is all present in the generator's `Model`/`Field` objects.
+
+**Status: closed.** `schemaMetadata = true` (off by default, so default output
+is unchanged) emits `SCHEMA`, `ENUM_SCHEMA` and `DATABASE_PROVIDER` into
+`metadata.py`; `prisma._schema` is the typed runtime view. Relations are
+classified into four shapes — named `to-one-owner`, `to-one-inverse`, `to-many`
+and `many-to-many` rather than S1–S4 — each carrying the FK model, FK columns,
+referenced columns, `on_delete`, the back-relation field, and `fk_required`.
+
+Three judgement calls worth knowing before building on it:
+
+- **`fk_required` is reported identically on both sides of a relation**, because
+  it is the same column. `Account.posts` and `Entry.account` both report `True`;
+  a planner that only checks the singular side would let `disconnect` through on
+  the list side and orphan rows instead of raising P2014.
+- **Prisma's default primary key constraint name is provider-specific**
+  (`<table>_pkey` on PostgreSQL, `PRIMARY` on MySQL), so an unmapped `@@id`
+  reports `None`. Unique and index default names *are* provider-independent
+  (`<table>_<cols>_key` / `_idx`) and are resolved, so a differ compares real
+  names instead of reporting every index as both dropped and added.
+- **Self-referential implicit m2m is flagged `join_ambiguous`, not guessed.**
+  Which side is join column `A` follows model-name order, which does not break
+  the tie when both sides are the same model. A coin-flip there produces a join
+  that silently returns the wrong rows.
+
+`@id`/`@@id`/`@unique`/`@@unique` are excluded from `indexes` — Prisma lists
+them there as well as in the constraint fields, and emitting both would make a
+migration tool create a redundant index alongside every key.
 
 ### 2.3 Removing the engine removes all validation
 
@@ -451,7 +491,7 @@ prior gate is green **in CI**, not on a laptop.
 
 | stage | ships | gate |
 | --- | --- | --- |
-| **0** | DMMF gaps G1–G5; richer relation metadata in `metadata.py.jinja` | golden-file test: the set of keys in the raw wire JSON equals the set of fields on each Pydantic model — zero silent drops |
+| **0** ✅ | DMMF gaps G1, G3, G4, G5-`schemas`; `schemaMetadata` emits the physical schema. **Left open:** `relationMode` and `@db.*`, neither of which is on the wire (§2.1) | golden-file test: the set of keys in the raw wire JSON equals the set of fields on each Pydantic model — zero silent drops. Plus absolute assertions on the reconstruction itself (`test_schema_metadata.py`), naming the exact table, column and constraint — a differential test against the query engine passes on any misreading both sides share |
 | **1** | `modelBackend = "sqlalchemy"`: `sa/` package, `PrismaRecordMixin`. Prisma still executes queries | Gates A+B+C green on five schemas incl. an implicit-m2m fixture (absent from the reference schema) and `@map`-heavy and native-types schemas; `sa/models.py` byte-identical across sync/async |
 | **2** | migration CLI: `generate` / `baseline` / `verify` / `handover` / `doctor` | on a DB built by real `prisma migrate deploy`, handover completes and post-handover Gate A is empty; adding one column then produces **exactly** one `op.add_column` |
 | **3** | `engineType = "sqlalchemy"` — the compiler. Tier 1 CRUD first, then filters, relations, nested writes, aggregates | differential corpus T1–T6 + `databases/` suite under the new engine |

@@ -5,6 +5,7 @@
    "name": "db",
    "provider": "postgresql",
    "schemas": [],
+   "sourceFilePath": "/tmp/claude-0/-home-user-prisma-client-py/29c2c0a1-cc17-55e1-b01b-febca43467c6/scratchpad/dmmfrec/schema.prisma",
    "url": {
     "fromEnvVar": "BENCH_DATABASE_URL",
     "value": null
@@ -101,6 +102,36 @@
      "isDefinedOnField": false,
      "model": "Entry",
      "type": "normal"
+    },
+    {
+     "fields": [
+      {
+       "name": "id"
+      }
+     ],
+     "isDefinedOnField": true,
+     "model": "Profile",
+     "type": "id"
+    },
+    {
+     "fields": [
+      {
+       "name": "accountId"
+      }
+     ],
+     "isDefinedOnField": true,
+     "model": "Profile",
+     "type": "unique"
+    },
+    {
+     "fields": [
+      {
+       "name": "id"
+      }
+     ],
+     "isDefinedOnField": true,
+     "model": "Label",
+     "type": "id"
     },
     {
      "fields": [
@@ -289,6 +320,22 @@
        "relationName": "AccountToEntry",
        "relationToFields": [],
        "type": "Entry"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": false,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "profile",
+       "relationFromFields": [],
+       "relationName": "AccountToProfile",
+       "relationToFields": [],
+       "type": "Profile"
       }
      ],
      "isGenerated": false,
@@ -425,10 +472,189 @@
        "relationName": "tree",
        "relationToFields": [],
        "type": "Entry"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "labels",
+       "relationFromFields": [],
+       "relationName": "EntryToLabel",
+       "relationToFields": [],
+       "type": "Label"
       }
      ],
      "isGenerated": false,
      "name": "Entry",
+     "primaryKey": null,
+     "uniqueFields": [],
+     "uniqueIndexes": []
+    },
+    {
+     "dbName": null,
+     "fields": [
+      {
+       "default": {
+        "args": [],
+        "name": "autoincrement"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": true,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "id",
+       "type": "Int"
+      },
+      {
+       "dbName": "account_id",
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": true,
+       "isRequired": true,
+       "isUnique": true,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "accountId",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "account",
+       "relationFromFields": [
+        "accountId"
+       ],
+       "relationName": "AccountToProfile",
+       "relationToFields": [
+        "id"
+       ],
+       "type": "Account"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": false,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "bio",
+       "type": "String"
+      }
+     ],
+     "isGenerated": false,
+     "name": "Profile",
+     "primaryKey": null,
+     "uniqueFields": [],
+     "uniqueIndexes": []
+    },
+    {
+     "dbName": "labels",
+     "fields": [
+      {
+       "default": {
+        "args": [],
+        "name": "autoincrement"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": true,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "id",
+       "type": "Int"
+      },
+      {
+       "dbName": "label_name",
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "name",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "entries",
+       "relationFromFields": [],
+       "relationName": "EntryToLabel",
+       "relationToFields": [],
+       "type": "Entry"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "related",
+       "relationFromFields": [],
+       "relationName": "similar",
+       "relationToFields": [],
+       "type": "Label"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "similar",
+       "relationFromFields": [],
+       "relationName": "similar",
+       "relationToFields": [],
+       "type": "Label"
+      }
+     ],
+     "isGenerated": false,
+     "name": "Label",
      "primaryKey": null,
      "uniqueFields": [],
      "uniqueIndexes": []

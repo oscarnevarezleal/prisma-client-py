@@ -28,6 +28,7 @@ for the harnesses behind the claims below.
 | `recursiveValidationModels` | `PRISMA_PY_CONFIG_RECURSIVE_VALIDATION_MODELS` | `false` | n/a |
 | `lazyActions` | `PRISMA_PY_CONFIG_LAZY_ACTIONS` | `false` | n/a |
 | `modelBackend` (experimental) | `PRISMA_PY_CONFIG_MODEL_BACKEND` | `"pydantic"` | n/a |
+| `schemaMetadata` | `PRISMA_PY_CONFIG_SCHEMA_METADATA` | `false` | n/a |
 
 Two further opt-ins are runtime environment flags rather than generator options:
 
@@ -59,6 +60,36 @@ Defers creating the per-model action namespaces (`client.user`, `client.post`, �
 and importing the actions module until first database access. `Prisma()`
 construction and `import` become O(models you touch) instead of O(models in the
 schema). No API change; the first query on each model pays a one-time lookup.
+
+### `schemaMetadata` (default: off)
+
+Emits the physical database schema — table names, column names, primary keys,
+unique constraints, indexes, enum value mappings and fully resolved foreign
+keys — into the generated `metadata.py`, readable through `prisma._schema`.
+
+The generated client has never carried any of this. It names *models* and
+*fields* in a GraphQL-ish document and hands it to the Rust query engine, which
+parsed `schema.prisma` itself and knows the tables; `metadata.py` therefore held
+exactly two things, the set of model names and `field -> related model name`.
+Anything that emits SQL without the engine — a SQLAlchemy backend, a migration
+tool, a schema differ — cannot name a single table without the rest.
+
+It costs generation time and a larger `metadata.py`; leave it off unless
+something is reading it. See `docs/sqlalchemy-refactor/` for what consumes it.
+
+```prisma
+generator client {
+  provider       = "prisma-client-py"
+  schemaMetadata = true
+}
+```
+
+Two things it deliberately does *not* do. Prisma's default primary key
+constraint name is provider-specific (`<table>_pkey` on PostgreSQL, `PRIMARY` on
+MySQL), so an unmapped `@@id` reports `None` rather than a guess. And for a
+self-referential many-to-many, which side is join column `A` is not recoverable
+from the DMMF, so the relation is flagged `join_ambiguous` instead of being
+assigned a coin-flip that would silently join the wrong rows.
 
 ### `modelBackend` (default: `"pydantic"`, experimental)
 
