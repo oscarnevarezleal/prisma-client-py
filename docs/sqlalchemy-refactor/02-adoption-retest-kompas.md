@@ -1,5 +1,9 @@
 # Adoption retest — same schema, library commit `22f9337`
 
+> **Status:** the three items below were fixed in `5496ec5` (`prisma.sa` 1.2.0).
+> We re-ran again — the `pg_dump` diff is now **zero** and the Alembic baseline
+> is **empty**. See [`03-adoption-verification-kompas.md`](03-adoption-verification-kompas.md).
+
 Re-ran the full runbook against the same 182-model production schema that
 produced [the original field report](01-adoption-report-kompas.md), on the same
 PostgreSQL 16 cluster, with the same procedure.
