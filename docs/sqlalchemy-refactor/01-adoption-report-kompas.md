@@ -1,5 +1,11 @@
 # Adoption report — first real-world consumer
 
+> **Status:** all five defects below were fixed in `22f9337`. We re-ran the
+> whole procedure against that commit — see
+> [`02-adoption-retest-kompas.md`](02-adoption-retest-kompas.md). B1, B2, B4 and B5 are
+> confirmed fixed against a live database; B3 is half-fixed; two new defects
+> surfaced. This document is preserved as the original record.
+
 Field report from running [`prisma-to-sqlalchemy-runbook.md`](../prisma-to-sqlalchemy-runbook.md)
 against a production Prisma Client Python codebase: 182 models, 62 enums, 1 view,
 432 migrations, ~2100 Prisma call sites, PostgreSQL 16.
