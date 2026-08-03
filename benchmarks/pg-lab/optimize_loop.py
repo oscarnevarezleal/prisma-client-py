@@ -51,6 +51,32 @@ QUERY_KEYS = [
     'sync_q_query_raw_ms',
 ]
 
+# Phase 2: foundational mechanisms implemented in the fork (no upstream
+# equivalent), tried on top of the phase-1 winner. 'env' entries are runtime
+# switches passed to the workload process; 'options' are generator options.
+CANDIDATES_PHASE2: list[dict[str, object]] = [
+    {
+        'name': 'lazy-actions',
+        'options': {'lazyActions': 'true'},
+        'why': 'action namespaces + actions module import deferred to first DB access',
+    },
+    {
+        'name': 'shared-engine',
+        'env': {'PRISMA_PY_SHARED_ENGINE': '1'},
+        'why': 'sync+async clients share one query-engine process (registry, refcounted)',
+    },
+    {
+        'name': 'fast-parse',
+        'env': {'PRISMA_PY_FAST_PARSE': '1'},
+        'why': 'trusted engine responses: compiled converters + model_construct, no validation pass',
+    },
+    {
+        'name': 'slim-models',
+        'options': {'modelBackend': '"slim"'},
+        'why': 'pydantic-free __slots__ records; no core-schema compilation at all',
+    },
+]
+
 # The ladder. Options accumulate: each candidate is (name, extra options, unified?)
 # and is tried on top of the current best configuration.
 CANDIDATES: list[dict[str, object]] = [
@@ -117,23 +143,34 @@ def generate_variant(workdir: Path, options: dict[str, str], unified: bool) -> t
     actions = (workdir / 'pkg_sync' / 'actions.py').read_text().replace(
         'from .client import Prisma', 'from .client_sync import Prisma'
     )
-    client = (workdir / 'pkg_sync' / 'client.py').read_text().replace(
-        'from . import types, models, errors, actions',
-        'from . import types, models, errors\nfrom . import actions_sync as actions',
+    client = (
+        (workdir / 'pkg_sync' / 'client.py')
+        .read_text()
+        # eager layout
+        .replace(
+            'from . import types, models, errors, actions',
+            'from . import types, models, errors\nfrom . import actions_sync as actions',
+        )
+        # lazyActions layout: the deferred import inside Prisma.__getattr__
+        .replace('from . import actions as _actions', 'from . import actions_sync as _actions')
     )
     (uni / 'actions_sync.py').write_text(actions)
     (uni / 'client_sync.py').write_text(client)
     return 'pkg_uni.client', 'pkg_uni.client_sync'
 
 
-def measure(workdir: Path, async_mod: str, sync_mod: str, repeats: int, rounds: int) -> dict[str, float]:
+def measure(workdir: Path, async_mod: str, sync_mod: str, repeats: int, rounds: int,
+            extra_env: dict[str, str] | None = None) -> dict[str, float]:
     """Median of `repeats` fresh-process workload runs (bytecode pre-warmed)."""
-    run([sys.executable, '-c', f'import {async_mod}, {sync_mod}'], cwd=workdir)
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
+    run([sys.executable, '-c', f'import {async_mod}, {sync_mod}'], cwd=workdir, env=env)
     runs: list[dict[str, float]] = []
     for _ in range(repeats):
         proc = run(
             [sys.executable, str(HERE / 'workload.py'), async_mod, sync_mod, '--rounds', str(rounds)],
-            cwd=workdir,
+            cwd=workdir, env=env,
         )
         runs.append(json.loads(proc.stdout.strip().splitlines()[-1]))
     return {k: round(statistics.median(r[k] for r in runs), 2) for k in runs[0]}
@@ -163,6 +200,9 @@ def main() -> None:
     parser.add_argument('--latency-guardrail', type=float, default=0.10,
                         help='max tolerated query_total_ms regression')
     parser.add_argument('--json', default=None)
+    parser.add_argument('--phase', type=int, default=1, choices=(1, 2),
+                        help='1: generator-option ladder from scratch; '
+                             '2: foundational-mechanism ladder on top of the phase-1 winner')
     args = parser.parse_args()
 
     workdir = Path(args.workdir)
@@ -181,22 +221,33 @@ def main() -> None:
         print(json.dumps(entry), flush=True)
 
     # iteration 0: baseline
-    best_options: dict[str, str] = {}
-    best_unified = False
+    if args.phase == 2:
+        # phase-1 winner is the new baseline
+        best_options: dict[str, str] = {
+            'recursive_type_depth': '-1',
+            'minimalRuntime': 'true',
+            'separateModelFiles': 'true',
+        }
+        best_unified = True
+    else:
+        best_options = {}
+        best_unified = False
+    best_env: dict[str, str] = {}
     a, s = generate_variant(workdir, best_options, best_unified)
-    best = cost(measure(workdir, a, s, args.repeats, args.rounds))
+    best = cost(measure(workdir, a, s, args.repeats, args.rounds, best_env))
     record('baseline', best_options, best_unified, 'ACCEPT', best)
 
-    remaining = list(CANDIDATES)
+    remaining = list(CANDIDATES_PHASE2 if args.phase == 2 else CANDIDATES)
     while remaining:
         candidate = remaining.pop(0)
         name = str(candidate['name'])
         trial_options = {**best_options, **candidate.get('options', {})}  # type: ignore[arg-type]
+        trial_env = {**best_env, **candidate.get('env', {})}  # type: ignore[arg-type]
         trial_unified = bool(candidate.get('unified', best_unified)) or best_unified
 
         try:
             a, s = generate_variant(workdir, trial_options, trial_unified)
-            scores = cost(measure(workdir, a, s, args.repeats, args.rounds))
+            scores = cost(measure(workdir, a, s, args.repeats, args.rounds, trial_env))
         except subprocess.CalledProcessError as exc:
             record(name, trial_options, trial_unified, 'REJECT', None,
                    note=f'failed: {(exc.stderr or exc.stdout or "")[-300:]}')
@@ -206,7 +257,7 @@ def main() -> None:
         latency_delta = scores['query_total_ms'] / best['query_total_ms'] - 1
         if improvement >= args.threshold and latency_delta <= args.latency_guardrail:
             note = f'composite -{improvement * 100:.1f}%'
-            best, best_options, best_unified = scores, trial_options, trial_unified
+            best, best_options, best_env, best_unified = scores, trial_options, trial_env, trial_unified
             record(name, trial_options, trial_unified, 'ACCEPT', scores, note)
         else:
             reason = (f'improvement {improvement * 100:+.2f}% < threshold'
@@ -216,7 +267,7 @@ def main() -> None:
 
     # regenerate the winning configuration so the workdir ends on the best state
     generate_variant(workdir, best_options, best_unified)
-    summary = {'final_options': best_options, 'unified': best_unified, 'final_scores': best}
+    summary = {'final_options': best_options, 'final_env': best_env, 'unified': best_unified, 'final_scores': best}
     print(json.dumps({'DONE': summary}), flush=True)
 
     if args.json:

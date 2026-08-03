@@ -43,16 +43,23 @@ def _rebuild_models() -> None:
     try:
         models_module = sys.modules[__name__]
 
-        # Get a snapshot of models to rebuild
-        models_to_rebuild = list(_model_cache.values())
-
-        # Rebuild each model
-        for model_class in models_to_rebuild:
-            try:
-                model_class.model_rebuild(_types_namespace={'models': models_module})
-            except Exception:
-                # If rebuild fails, Pydantic will resolve lazily
-                pass
+        # Rebuilding one model can lazily load others (its relation targets);
+        # those newly cached classes need a rebuild pass of their own or their
+        # forward references stay unevaluated. Loop until the cache is stable.
+        rebuilt: set = set()
+        while True:
+            pending = [m for m in list(_model_cache.values()) if m not in rebuilt]
+            if not pending:
+                break
+            for model_class in pending:
+                rebuilt.add(model_class)
+                try:
+                    # slim-backend models have no pydantic machinery to rebuild
+                    if hasattr(model_class, 'model_rebuild'):
+                        model_class.model_rebuild(_types_namespace={'models': models_module})
+                except Exception:
+                    # If rebuild fails, Pydantic will resolve lazily
+                    pass
     finally:
         _rebuilding = False
 

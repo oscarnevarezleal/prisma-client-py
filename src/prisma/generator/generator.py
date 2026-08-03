@@ -246,6 +246,12 @@ class Generator(GenericGenerator[PythonData]):
 
         params = data.to_params()
 
+        if config.model_backend == 'slim' and not config.separate_model_files:
+            raise ValueError(
+                'modelBackend = "slim" currently requires separateModelFiles = true;\n'
+                'add `separateModelFiles = true` to your generator block.'
+            )
+
         try:
             # Handle separate model files if enabled
             if config.separate_model_files:

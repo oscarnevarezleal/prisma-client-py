@@ -587,6 +587,29 @@ class Config(BaseSettings):
             'crashing on import. Requires Pydantic v2.'
         ),
     )
+    lazy_actions: bool = FieldInfo(
+        default=False,
+        env='PRISMA_PY_CONFIG_LAZY_ACTIONS',
+        alias='lazyActions',
+        description=(
+            'Create per-model action namespaces (client.user, client.post, ...) on first '
+            'attribute access instead of eagerly in Prisma.__init__, and defer importing '
+            'the actions module until first database access. Client construction and '
+            'import become O(models touched) instead of O(models in schema).'
+        ),
+    )
+    model_backend: str = FieldInfo(
+        default='pydantic',
+        env='PRISMA_PY_CONFIG_MODEL_BACKEND',
+        alias='modelBackend',
+        description=(
+            'Record model backend. "pydantic" (default) generates the usual pydantic '
+            'BaseModel records. "slim" generates pydantic-free __slots__ records '
+            'deserialized by compiled converters — much lighter, but they only convert '
+            'trusted engine data rather than validating arbitrary input. Experimental; '
+            'requires separateModelFiles.'
+        ),
+    )
 
     # this seems to be the only good method for setting the contextvar as
     # we don't control the actual construction of the object like we do for
@@ -675,6 +698,32 @@ class Config(BaseSettings):
         if recursive_validation_models is not None:
             values['recursive_validation_models'] = recursive_validation_models
             values.pop('recursiveValidationModels', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_lazy_actions(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        lazy_actions = values.get('lazyActions')
+        if lazy_actions is not None:
+            values['lazy_actions'] = lazy_actions
+            values.pop('lazyActions', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_model_backend(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        model_backend = values.get('modelBackend')
+        if model_backend is not None:
+            values['model_backend'] = model_backend
+            values.pop('modelBackend', None)
+
+        backend = values.get('model_backend')
+        if backend is not None and backend not in ('pydantic', 'slim'):
+            raise ValueError(f'modelBackend must be "pydantic" or "slim", got: {backend!r}')
 
         return values
 
@@ -1066,6 +1115,38 @@ class Field(BaseModel):
         if self.is_list:
             return f'List[{type_}]'
         return type_
+
+    _SLIM_SCALAR_TAGS: ClassVar[Dict[str, str]] = {
+        'String': 'str',
+        'Int': 'int',
+        'BigInt': 'bigint',
+        'Float': 'float',
+        'Boolean': 'bool',
+        'DateTime': 'datetime',
+        'Json': 'json',
+        'Bytes': 'base64',
+        'Decimal': 'decimal',
+    }
+
+    def slim_spec(self) -> str:
+        """Conversion spec literal for the slim model backend.
+
+        Nested tuples consumed by `prisma._fastparse.converter_for_spec`,
+        e.g. `('opt', ('list', ('model', 'Post')))`.
+        """
+        spec: object
+        if self.kind == 'object':
+            spec = ('model', self.type)
+        elif self.kind == 'enum':
+            spec = 'enum'
+        else:
+            spec = self._SLIM_SCALAR_TAGS[self.type]
+
+        if self.is_list:
+            spec = ('list', spec)
+        if not self.is_required or self.relation_name is not None:
+            spec = ('opt', spec)
+        return repr(spec)
 
     @property
     def python_type_as_string(self) -> str:

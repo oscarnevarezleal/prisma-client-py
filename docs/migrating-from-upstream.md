@@ -23,6 +23,35 @@ See [`benchmarks/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/de
 | `scalarFieldsOnly` | `PRISMA_PY_CONFIG_SCALAR_FIELDS_ONLY` | `false` | n/a |
 | `separateModelFiles` | `PRISMA_PY_CONFIG_SEPARATE_MODEL_FILES` | `false` | n/a |
 | `recursiveValidationModels` | `PRISMA_PY_CONFIG_RECURSIVE_VALIDATION_MODELS` | `false` | n/a |
+| `lazyActions` | `PRISMA_PY_CONFIG_LAZY_ACTIONS` | `false` | n/a |
+| `modelBackend` (experimental) | `PRISMA_PY_CONFIG_MODEL_BACKEND` | `"pydantic"` | n/a |
+
+Two further opt-ins are runtime environment flags rather than generator options:
+
+| Runtime flag | Default | What it does |
+| --- | --- | --- |
+| `PRISMA_PY_SHARED_ENGINE=1` | off | sync + async clients for the same schema/datasource share one query-engine process (refcounted); saves ~an engine process (~20-25 MB) and a spawn per extra client connected at the same time |
+| `PRISMA_PY_FAST_PARSE=1` | off | deserialize trusted engine responses without a validation pass. **Measured slower than pydantic-core validation on Pydantic v2** — kept for completeness, not recommended |
+
+### `lazyActions` (default: off)
+
+Defers creating the per-model action namespaces (`client.user`, `client.post`, …)
+and importing the actions module until first database access. `Prisma()`
+construction and `import` become O(models you touch) instead of O(models in the
+schema). No API change; the first query on each model pays a one-time lookup.
+
+### `modelBackend = "slim"` (default: `"pydantic"`, experimental)
+
+Generates pydantic-free `__slots__` record classes deserialized by compiled
+per-model converters (datetimes, Decimal, Base64, Json, BigInt, nested relations).
+Requires `separateModelFiles`. Keeps the pydantic-shaped surface most code relies
+on (`model_dump()`, `dict()`, `json()`, keyword construction, `Model.prisma()`),
+but records **convert trusted engine data rather than validating arbitrary
+input** — keep the default backend where you feed untrusted data into models, or
+validate at the boundary. Not supported: `create_partial()`, subclass field
+overrides, and the mypy plugin's model checks. See
+[`benchmarks/pg-lab/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks/pg-lab)
+for measurements.
 
 > **All options are opt-in (off by default), so installing the fork and regenerating
 > reproduces upstream output exactly.** Enable the options below as needed.

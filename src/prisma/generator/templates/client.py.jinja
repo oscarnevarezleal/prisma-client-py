@@ -11,7 +11,15 @@ from typing_extensions import override
 
 from pydantic import BaseModel
 
+{% if generator.config.lazy_actions %}
+from . import types, models, errors
+if TYPE_CHECKING:
+    # lazyActions: at runtime the actions module (the largest generated module)
+    # is imported on first database access, inside Prisma.__getattr__.
+    from . import actions
+{% else %}
 from . import types, models, errors, actions
+{% endif %}
 from ._base_client import BasePrisma, UseClientDefault, USE_CLIENT_DEFAULT
 from .types import DatasourceOverride, HttpConfig, MetricsFormat
 from ._types import BaseModelT, PrismaMethod, TransactionId, Datasource
@@ -95,12 +103,35 @@ class Prisma({% if is_async %}AsyncBasePrisma{% else %}SyncBasePrisma{% endif %}
             default_datasource_name='{{ datasources[0].name }}',
         )
 
+        {% if generator.config.lazy_actions %}
+        # lazyActions: per-model action namespaces are created on first
+        # attribute access (see __getattr__ below) so that constructing a
+        # client is O(models touched) rather than O(models in the schema).
+        {% else %}
         {% for model in dmmf.datamodel.models %}
         self.{{ model.instance_name }} = actions.{{ model.name }}Actions[models.{{ model.name }}](self, models.{{ model.name }})
         {% endfor %}
+        {% endif %}
 
         if auto_register:
             register(self)
+    {% if generator.config.lazy_actions %}
+
+    if not TYPE_CHECKING:
+        # Fallback for the model-action slots declared above; only called for
+        # attributes that have not been set yet. Type checkers never see this —
+        # they use the precise class-level annotations instead.
+        def __getattr__(self, name: str) -> Any:
+            entry = _LAZY_ACTIONS.get(name)
+            if entry is None:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {name!r}')
+
+            from . import actions as _actions
+
+            namespace = getattr(_actions, entry[0])(self, getattr(models, entry[1]))
+            setattr(self, name, namespace)
+            return namespace
+    {% endif %}
 
     @property
     @override
@@ -246,6 +277,17 @@ class Prisma({% if is_async %}AsyncBasePrisma{% else %}SyncBasePrisma{% endif %}
         )
 
 
+{% if generator.config.lazy_actions %}
+# lazyActions: instance attribute -> (actions class name, model class name),
+# resolved lazily by Prisma.__getattr__ so unused models are never imported.
+_LAZY_ACTIONS: Dict[str, Tuple[str, str]] = {
+    {% for model in dmmf.datamodel.models %}
+    '{{ model.instance_name }}': ('{{ model.name }}Actions', '{{ model.name }}'),
+    {% endfor %}
+}
+
+
+{% endif %}
 TransactionManager = {% if is_async %}AsyncTransactionManager{% else %}SyncTransactionManager{% endif %}[Prisma]
 
 

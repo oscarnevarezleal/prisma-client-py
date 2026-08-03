@@ -90,6 +90,56 @@ The remaining big-ticket items are structural, not configuration: making
 see `docs/contributing/unified-sync-async-client.md`), stub-splitting
 `actions.py`'s docstrings, and the ~22 MB/process query-engine sidecars.
 
+## Phase 2: foundational mechanisms (`--phase 2`)
+
+Phase 1 exhausted the existing generator options. Phase 2 sets the phase-1
+winner as the new baseline and walks a ladder of mechanisms implemented in
+the fork for this purpose (none exist upstream):
+
+| mechanism | switch | what it does |
+| --- | --- | --- |
+| lazy actions | `lazyActions = true` | action namespaces + the actions module import deferred to first DB access |
+| shared engine | `PRISMA_PY_SHARED_ENGINE=1` | sync + async clients attach to one refcounted query-engine process |
+| fast parse | `PRISMA_PY_FAST_PARSE=1` | trusted engine responses skip validation (compiled converters + `model_construct`) |
+| slim models | `modelBackend = "slim"` | pydantic-free `__slots__` records deserialized by codegen-unrolled converters |
+
+Run of 2026-08-03, v2 (after fixes below; raw data `results-phase2-2026-08-03.json`):
+
+| # | candidate | verdict | RSS (MB) | import (ms) | queries (ms) | composite |
+| - | --- | --- | ---: | ---: | ---: | ---: |
+| 0 | phase-1 winner (baseline) | — | 63.8 | 345 | 28.2 | 96.1 |
+| 1 | `lazyActions` | **ACCEPT −2.5%** | 64.0 | 314 | 27.6 | 93.7 |
+| 2 | shared engine | REJECT (±noise, see below) | 64.1 | 319 | 27.4 | 95.3 |
+| 3 | fast parse | REJECT (slower) | 64.2 | 305 | 29.9 | 94.2 |
+| 4 | `modelBackend = "slim"` | **ACCEPT −2.9%** | **58.3** | 328 | 26.4 | **90.9** |
+
+Cumulative across both phases: **334.8 → 58.3 MB (−83%) and 3.9 s → 0.33 s.**
+
+What the loop taught us (the rejections are the valuable part):
+
+- **The loop caught a real bug on its first pass.** `lazyActions` was
+  auto-rejected in run 1: without the eager "touch every model" side effect,
+  transitively loaded models never got their pydantic forward references
+  rebuilt and the query builder crashed. The fix (rebuild until the model
+  cache is stable in `models/__init__`) turned it into an accepted −2.5%.
+- **`fast-parse` lost twice (+12.6%, then +0.6% after warm plans).**
+  pydantic-core's Rust validator is *faster* than a Python-side
+  `model_construct` loop. "Skip validation for speed" is a myth on Pydantic
+  v2 — the mechanism ships disabled, kept as a documented negative result.
+- **`slim` went from rejected (−0.06%) to accepted (−2.9%) by codegen.**
+  The first version's generic per-field loop cost +5.9% query latency —
+  eating its own −13% RSS win. Unrolling `from_engine` into an
+  exec-compiled function per model (the namedtuple trick) removed the
+  regression: −5.5 MB RSS *and* faster queries than the pydantic backend.
+- **The shared engine's win is invisible to the composite, but real.** The
+  workload connects the two clients sequentially, so the second engine never
+  coexists with the first in the RSS metric. Measured with both clients
+  connected simultaneously — the actual dual-client scenario:
+  **2 engine processes / 48 MB → 1 process / 24 MB**, verified refcounted
+  (first client keeps working after the second disconnects). If your sync and
+  async clients are connected at the same time, this flag is worth ~24 MB per
+  process regardless of what the composite says.
+
 ## Notes
 
 - Python RSS only; the Rust query engines are separate processes (~22 MB each,
