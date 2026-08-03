@@ -1,1 +1,4 @@
-psycopg[binary]==3.3.4
+# 3.2 is the last line that still ships wheels for Python 3.8, which the test
+# matrix still covers; 3.3 would break the install for every job, not just the
+# ones that reach a database.
+psycopg[binary]==3.2.13

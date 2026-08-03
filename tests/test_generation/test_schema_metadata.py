@@ -19,7 +19,7 @@ The fixture is recorded from a real `prisma generate` against
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterator, cast
 
 import pytest
 
@@ -121,7 +121,7 @@ def test_field_level_unique_is_reported(schema: Dict[str, Any]) -> None:
 def _unique_named(schema: Dict[str, Any], model: str, name: str) -> Dict[str, Any]:
     found = [u for u in schema[model]['uniques'] if u['name'] == name]
     assert found, f'{model} has no unique named {name!r}'
-    return found[0]
+    return cast('Dict[str, Any]', found[0])
 
 
 def test_index_name_is_resolved_when_unnamed(schema: Dict[str, Any]) -> None:
