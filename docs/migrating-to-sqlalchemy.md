@@ -236,6 +236,38 @@ Only once no module resolves `get_client()`:
 
 ---
 
+## What it costs you to stay (measured)
+
+If performance is part of why you're considering this migration, the numbers
+are worth having before you decide. Measured on this repo's
+[`benchmarks/pg-lab/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks/pg-lab)
+rig (41-model schema, local PostgreSQL 16, warm connections):
+
+| | 1 row | 400 rows |
+| --- | ---: | ---: |
+| postgres itself (psycopg) | 0.17 ms | 0.90 ms |
+| the same query through Prisma | 1.96 ms | 7.56 ms |
+| **query-engine overhead** | **91%** | **88%** |
+
+The database is ~10% of a Prisma query; the binary query engine — a subprocess
+hop plus GraphQL parse/plan/serialize per call — is the rest. This is not a
+tuning problem: connection pooling, HTTP keep-alive and concurrency scaling
+were all measured and are all working correctly.
+
+Two honest implications:
+
+- **A driver-level stack removes the ~90%, rather than optimizing the ~10%.**
+  If per-query latency is your binding constraint, that is the strongest
+  argument for this migration, and no amount of client-side work substitutes
+  for it.
+- **If it isn't your constraint, this is a weak reason to migrate.** 2 ms per
+  query is irrelevant to most request paths, and you would be trading away the
+  schema-as-source-of-truth workflow, typed query arguments, and Prisma's
+  migration tooling to recover it. Before committing, check whether your
+  latency actually lives in queries — and note that `query_raw` already
+  reclaims 28-46% of it by skipping GraphQL planning, while keeping typed
+  records.
+
 ## What you gain and lose
 
 **Gain:** one model layer for sync and async (SQLAlchemy 2.x shares `DeclarativeBase`

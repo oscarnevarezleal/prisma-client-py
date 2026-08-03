@@ -227,6 +227,57 @@ nothing in Python can move it; the remaining levers are fewer round-trips
 (`batch_()`, fewer N+1 patterns) or a different transport than the HTTP binary
 engine.
 
+## Where the time actually goes (`where_time_goes.py`)
+
+Everything above optimizes the Python side. This measures how big that side is,
+by timing the same logical query at three levels — bare postgres (psycopg, no
+prisma), the engine executing raw SQL (`query_raw`, no GraphQL planning), and
+the full ORM path — and attributing the differences.
+
+| level | 1 row | 400 rows |
+| --- | ---: | ---: |
+| postgres itself (psycopg) | 0.17 ms | 0.90 ms |
+| engine, raw SQL (`query_raw`) | 1.40 ms | 4.08 ms |
+| engine, full ORM path | 1.96 ms | 7.56 ms |
+
+| attribution | 1 row | 400 rows |
+| --- | ---: | ---: |
+| postgres itself | 0.17 ms (**9%**) | 0.90 ms (**12%**) |
+| engine transport + execution | 1.23 ms (63%) | 3.18 ms (42%) |
+| GraphQL planning + serialization | 0.55 ms (28%) | 3.48 ms (46%) |
+
+**The database is ~10% of a Prisma query. The query engine is ~90%.** The same
+query is 8-12x slower through Prisma than through psycopg.
+
+Ruled out as explanations (both measured, both fine):
+
+- **Connection churn** — the engine pools its postgres connections; 50 queries
+  ran against the same backend with an unchanged `backend_start`.
+- **HTTP connection churn** — httpx keep-alive works; 31 client requests shared
+  one pooled connection (`Request Count: 31`).
+- **Concurrency serialization** — throughput improves under load
+  (2.5 ms/query sequential → ~1.6 ms/query at 80+ concurrent).
+
+So the overhead is intrinsic to the binary query engine: a subprocess hop plus
+GraphQL parse/plan/serialize on every call.
+
+### What this means
+
+- **The client-side wins in this document are real but bounded.** Memory (−83%)
+  and import time (−92%) are large and worth having. Query latency is not
+  where a Python client can win: even eliminating *all* Python deserialization
+  would leave ~88% of query time untouched.
+- **`query_raw` is the biggest available latency lever** — it skips GraphQL
+  planning and serialization for 28% (1 row) to 46% (400 rows). Model-scoped
+  `Model.prisma().query_raw(...)` still returns typed records, so hot paths can
+  use it without giving up the model layer.
+- **If query latency is the binding constraint, the engine is the thing to
+  replace, not the client.** A driver-level stack (SQLAlchemy/psycopg) removes
+  the ~90% rather than optimizing the ~10% — which is the trade
+  [`docs/migrating-to-sqlalchemy.md`](../../docs/migrating-to-sqlalchemy.md)
+  lays out. Prisma's value is the schema/typing/migration workflow; this is
+  what it costs per query.
+
 ## Notes
 
 - Python RSS only; the Rust query engines are separate processes (~22 MB each,
