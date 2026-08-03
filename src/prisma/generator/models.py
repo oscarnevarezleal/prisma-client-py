@@ -235,29 +235,35 @@ def build_schema_metadata(datamodel: 'Datamodel') -> Dict[str, Any]:
                 }
             )
 
-        # `uniqueIndexes` carries the constraint name, `uniqueFields` guarantees
-        # field order; the pair of them is the only complete description.
+        # Driven off `datamodel.indexes` rather than `uniqueIndexes`, because
+        # that is the only place a *field-level* `@unique` shows up — Prisma
+        # reports those solely as `Field.isUnique`, and a client reading
+        # `uniqueIndexes` alone silently loses every single-column unique in the
+        # schema.
         uniques = []
-        for position, unique in enumerate(model.unique_indexes):
-            ordered = model.unique_fields[position] if position < len(model.unique_fields) else unique.fields
-            db_name = next(
-                (
-                    index.db_name
-                    for index in datamodel.indexes_for(model.name)
-                    if index.type == 'unique' and [f.name for f in index.fields] == list(ordered)
-                ),
+        for index in datamodel.indexes_for(model.name):
+            if index.type != 'unique':
+                continue
+
+            unique_fields = [f.name for f in index.fields]
+            columns = [model.resolve_field(name).column_name for name in unique_fields]
+            # The Prisma-level identifier, i.e. the key in `where={...}`. A
+            # compound unique gets it from `uniqueIndexes`; a field-level one is
+            # addressed by the field name itself.
+            prisma_name = next(
+                (unique.name for unique in model.unique_indexes if set(unique.fields) == set(unique_fields)),
                 None,
             )
-            columns = [model.resolve_field(name).column_name for name in ordered]
             uniques.append(
                 {
-                    # `name` is the *Prisma* identifier used in `where={'a_b': ...}`;
-                    # `db_name` is the constraint in the database. They are
-                    # unrelated namespaces and both are needed.
-                    'name': unique.name,
-                    'db_name': db_name or '_'.join([model.table_name, *columns, 'key']),
-                    'fields': list(ordered),
+                    # `name` and `db_name` are unrelated namespaces and both are
+                    # needed: one addresses the constraint in a query, the other
+                    # names it in the database.
+                    'name': prisma_name or '_'.join(unique_fields),
+                    'db_name': index.db_name or '_'.join([model.table_name, *columns, 'key']),
+                    'fields': unique_fields,
                     'columns': columns,
+                    'is_defined_on_field': index.is_defined_on_field,
                 }
             )
 

@@ -492,11 +492,46 @@ prior gate is green **in CI**, not on a laptop.
 | stage | ships | gate |
 | --- | --- | --- |
 | **0** ✅ | DMMF gaps G1, G3, G4, G5-`schemas`; `schemaMetadata` emits the physical schema. **Left open:** `relationMode` and `@db.*`, neither of which is on the wire (§2.1) | golden-file test: the set of keys in the raw wire JSON equals the set of fields on each Pydantic model — zero silent drops. Plus absolute assertions on the reconstruction itself (`test_schema_metadata.py`), naming the exact table, column and constraint — a differential test against the query engine passes on any misreading both sides share |
-| **1** | `modelBackend = "sqlalchemy"`: `sa/` package, `PrismaRecordMixin`. Prisma still executes queries | Gates A+B+C green on five schemas incl. an implicit-m2m fixture (absent from the reference schema) and `@map`-heavy and native-types schemas; `sa/models.py` byte-identical across sync/async |
+| **1** ✅ | `prisma.sa`: the schema half — `MetaData`/`Table` built from `schemaMetadata`. Prisma still executes queries. **Changed from the plan:** no `modelBackend = "sqlalchemy"` and no `PrismaRecordMixin` (§9.1) | stronger than the planned gate: `prisma db push` and `MetaData.create_all()` into two databases, `pg_dump --schema-only` **identical**. Empty autogenerate diff is necessary but not sufficient — it ignores FK actions, constraint names, index methods, column order and CHECKs |
 | **2** | migration CLI: `generate` / `baseline` / `verify` / `handover` / `doctor` | on a DB built by real `prisma migrate deploy`, handover completes and post-handover Gate A is empty; adding one column then produces **exactly** one `op.add_column` |
 | **3** | `engineType = "sqlalchemy"` — the compiler. Tier 1 CRUD first, then filters, relations, nested writes, aggregates | differential corpus T1–T6 + `databases/` suite under the new engine |
 | **4** | shadow mode, property testing, deep nightly | ≥7 consecutive green nightlies, zero T1/T2 waivers |
 | **5** | default flip, then deprecate binary | two releases at stage 4 with no new user-reported difference |
+
+### 9.1 Why Stage 1 dropped `modelBackend = "sqlalchemy"`
+
+The plan had records become SQLAlchemy declarative instances via a
+`PrismaRecordMixin`, so that `db.user.find_many()` returned objects usable in a
+`Session`. That is incompatible with the standing constraint on this work — **no
+changes in signatures nor payloads** — because it changes the type of every
+value the client returns.
+
+What Stage 1 ships instead is the schema half only: `MetaData` and `Table`
+objects, built at runtime from `metadata.SCHEMA`. Records are untouched.
+
+That is not a lesser deliverable for what comes next. Stage 3 compiles to
+SQLAlchemy **Core**, which consumes `Table` objects, not declarative classes;
+the ORM layer was never on the path. And it is independently useful today —
+Alembic, reflection and hand-written Core queries all work against a
+Prisma-managed database without changing a line of Prisma code.
+
+Building the `MetaData` at runtime rather than emitting declarative source from a
+Jinja template was the other departure: one implementation tested once against a
+real database, instead of template output that has to be re-verified for every
+schema shape. `prisma py sqlalchemy generate` (Stage 2) dumps declarative source
+for people who want it checked in.
+
+### 9.2 What Stage 1 refuses to do
+
+Each of these is a case where a plausible answer exists and would be silently
+wrong, so the code raises or flags instead:
+
+| case | why it cannot be answered | consequence |
+| --- | --- | --- |
+| self-referential implicit m2m | which side is join column `A` is not in the DMMF | flagged `join_ambiguous`; traversal needs an explicit decision |
+| `@db.*` native types | not sent through the generator protocol at all (verified) | precision/length annotations invisible; recoverable only by lexing the schema text |
+| `relationMode = "prisma"` | not sent either | the database has *no* FKs; the constraints we build would diff against every table |
+| any provider but PostgreSQL | type table not verified against a real `db push` | `UnsupportedProviderError` naming the provider |
 
 ---
 

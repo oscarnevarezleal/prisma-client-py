@@ -1,0 +1,115 @@
+"""SQLAlchemy metadata for a Prisma schema.
+
+```python
+from prisma import sa
+
+md = sa.metadata()  # a sqlalchemy.MetaData
+accounts = sa.table_for('Account')  # a sqlalchemy.Table
+```
+
+`metadata()` describes the same database `prisma db push` creates — same tables,
+columns, types, constraint names, foreign key actions and implicit
+many-to-many join tables. Point Alembic's `target_metadata` at it and
+autogenerate produces an empty diff against a Prisma-managed database; that
+equivalence is the test this package is held to.
+
+Requires a client generated with `schemaMetadata = true`, and PostgreSQL — see
+`prisma.sa._types` for why the verified provider list is short.
+
+Nothing here executes queries. It is the schema half of the SQLAlchemy
+migration: it lets you run Alembic, reflect, and write SQLAlchemy Core queries
+against the tables your Prisma client is already using, before anything about
+how queries execute changes.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Optional
+
+from .._schema import get_schema, get_provider, get_enum_schema
+
+if TYPE_CHECKING:
+    import sqlalchemy as sa
+
+__all__ = (
+    'metadata',
+    'table_for',
+    'join_table_for',
+    'build_metadata',
+    'clear_cache',
+    'UnsupportedProviderError',
+)
+
+_CACHE: Optional[Any] = None
+
+
+def __getattr__(name: str) -> Any:
+    # Imported lazily so that `import prisma` does not pull in SQLAlchemy for
+    # the majority of users who are not using it.
+    if name == 'build_metadata':
+        from ._build import build_metadata
+
+        return build_metadata
+    if name == 'UnsupportedProviderError':
+        from ._types import UnsupportedProviderError
+
+        return UnsupportedProviderError
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+
+
+def metadata() -> 'sa.MetaData':
+    """The `MetaData` for the generated schema, built once and cached."""
+    global _CACHE
+
+    if _CACHE is None:
+        from ._build import build_metadata
+
+        _CACHE = build_metadata(get_schema(), get_enum_schema(), get_provider())
+
+    return _CACHE
+
+
+def clear_cache() -> None:
+    """Drop the cached `MetaData`.
+
+    Only useful in tests, and after regenerating the client in-process.
+    """
+    global _CACHE
+    _CACHE = None
+
+
+def table_for(model: str) -> 'sa.Table':
+    """The table a Prisma model maps to, e.g. `table_for('Account')`.
+
+    Takes the *model* name, not the table name — `@@map` is exactly what this
+    resolves.
+    """
+    schema = get_schema()
+    try:
+        spec = schema[model]
+    except KeyError:
+        raise LookupError(f'Unknown model: {model}') from None
+
+    return metadata().tables[_qualified(spec['table'])]
+
+
+def join_table_for(model: str, field: str) -> 'sa.Table':
+    """The join table behind an implicit many-to-many relation.
+
+    Prisma manages this table invisibly — it has no model, so `table_for` cannot
+    reach it, and a query that traverses the relation needs it.
+    """
+    from .._schema import relation
+
+    rel = relation(model, field)
+    if rel['shape'] != 'many-to-many':
+        raise LookupError(
+            f'{model}.{field} is a {rel["shape"]} relation; only implicit many-to-many relations have a join table'
+        )
+
+    return metadata().tables[_qualified(rel['join_table'])]
+
+
+def _qualified(table: str) -> str:
+    md = metadata()
+    return f'{md.schema}.{table}' if md.schema else table

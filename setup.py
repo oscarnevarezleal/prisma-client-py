@@ -31,6 +31,8 @@ extras = {
     'node': requirements('node.txt'),
     # for the opt-in `modelBackend = "msgspec"` generator option
     'msgspec': requirements('msgspec.txt'),
+    # for `prisma.sa`, which needs `schemaMetadata = true`
+    'sqlalchemy': requirements('sqlalchemy.txt'),
 }
 
 setup(

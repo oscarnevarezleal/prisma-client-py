@@ -65,11 +65,63 @@ knows about the other.
 
 ---
 
-## Phase 2 — generate SQLAlchemy models from the DMMF
+## Phase 2 — get the SQLAlchemy schema
 
-This is the step that makes the whole migration tractable, and it is the convention
-this library is unusually well set up for. Prisma sends generators the schema in AST
-form (the DMMF), and Prisma Client Python exposes that as Pydantic models you can
+### The short version: `prisma.sa`
+
+This fork ships the translation, so for most schemas Phase 2 is two lines of config
+and one import.
+
+```prisma
+generator client {
+  provider       = "prisma-client-py"
+  schemaMetadata = true
+}
+```
+
+```py
+from prisma import sa
+
+metadata = sa.metadata()          # a sqlalchemy.MetaData
+accounts = sa.table_for('Account')  # a sqlalchemy.Table, resolving @@map
+```
+
+`sa.metadata()` describes the same database `prisma db push` creates. That is not a
+claim about intent — the test that gates this package builds one database with
+`prisma db push` and another with `MetaData.create_all()`, and requires
+`pg_dump --schema-only` to come out **identical**: same tables, column order, types
+and precisions, constraint names, foreign key actions, indexes, enum labels and
+implicit many-to-many join tables.
+
+That is a deliberately stronger bar than an empty Alembic autogenerate diff, which is
+what most schema-translation tools are checked against. Autogenerate does not compare
+foreign key `ondelete`/`onupdate`, constraint names, index methods, column ordering or
+CHECK constraints — so it stays quiet about exactly the differences that hurt later.
+Point Alembic's `target_metadata` at `sa.metadata()` and you get the empty first
+revision Phase 1 asks for.
+
+Requires PostgreSQL today. The type table is verified against a real database rather
+than against documentation, and only providers checked that way are listed; an
+unverified provider raises `UnsupportedProviderError` naming itself rather than
+emitting a plausible-looking schema that diffs on someone else's deploy.
+
+Three things it will not guess:
+
+- **A self-referential implicit many-to-many.** The join table is built, but which
+  side is column `A` is not recoverable from the DMMF, so the relation is flagged
+  `join_ambiguous`. Traversing it needs an explicit decision from you.
+- **`@db.*` native type annotations.** Prisma does not send these through the
+  generator protocol at all — verified, not assumed — so `@db.VarChar(255)` is
+  invisible. If you use them, diff once after cutover.
+- **`relationMode = "prisma"`.** Also absent from the generator payload. Under it the
+  database has *no* foreign keys at all, so the FK constraints built here would be a
+  diff against every table.
+
+### The long version: your own generator
+
+If you want declarative classes checked into your repo, a different naming scheme, or
+mixins on the generated models, the DMMF is right there. Prisma sends generators the
+schema in AST form, and Prisma Client Python exposes it as Pydantic models you can
 subclass a generator against:
 
 ```py
@@ -116,9 +168,9 @@ Everything you need to emit a faithful SQLAlchemy model is already on the DMMF
 | `field.is_id`, `model.compound_primary_key` | `primary_key=True`, `PrimaryKeyConstraint` |
 | `field.is_unique`, `model.unique_indexes` | `unique=True`, `UniqueConstraint` |
 | `field.is_required` | `nullable=False` |
-| `field.is_list` (scalar) | `ARRAY(...)` / JSON, provider-dependent |
+| `field.is_list` (scalar) | `ARRAY(...)` — Prisma only allows these on PostgreSQL/CockroachDB, and the column is NULLable despite `is_required` |
 | `field.has_default_value`, `field.default` | `default=` / `server_default=` |
-| `field.is_updated_at` (`@updatedAt`) | `onupdate=func.now()` |
+| `field.is_updated_at` (`@updatedAt`) | `onupdate=func.now()` — Python-side, as Prisma also emits no DDL for it |
 | `field.relation_from_fields` / `relation_to_fields` | `ForeignKey(...)` |
 | `field.relation_name` | `relationship(back_populates=...)` pairing |
 | `field.relation_on_delete` | `ondelete=` on the FK |
@@ -126,6 +178,26 @@ Everything you need to emit a faithful SQLAlchemy model is already on the DMMF
 Note the direction convention: the side of a relation that holds
 `relation_from_fields` is the side that owns the foreign key. That is exactly the
 information `relationship()` / `ForeignKey()` need, so the pairing is mechanical.
+
+Five places the mechanical translation is wrong, all of them found by diffing DDL
+against a real `prisma db push` rather than by reading the docs:
+
+- **`@default(cuid())` and `@default(uuid())` are client-side.** They produce no
+  DDL. A `server_default` there diffs against every real database, and worse, hides a
+  missing client-side value behind an INSERT that quietly succeeds.
+- **An undeclared `onDelete` is `RESTRICT` for a mandatory relation and `SET NULL`
+  for an optional one** — not `CASCADE`, not `NO ACTION`. `onUpdate` is `CASCADE` for
+  both, and is not reported in the DMMF at all, so a non-default `onUpdate:` is
+  invisible.
+- **Prisma emits uniques as `CREATE UNIQUE INDEX`, even on PostgreSQL.** Alembic
+  distinguishes a unique index from a `UniqueConstraint`, so the idiomatic choice
+  means a drop-and-recreate on every migration.
+- **A field-level `@unique` is not in `model.unique_indexes`.** It appears only as
+  `field.is_unique`, so reading `unique_indexes` alone silently loses every
+  single-column unique in the schema.
+- **`DateTime` is `timestamp(3)`, not `timestamp`,** and `Decimal` is
+  `numeric(65,30)`. Precision that a translation drops is a column alteration on
+  every migration afterwards.
 
 Scalar types map through the same table the client uses (`TYPE_MAPPING` in
 `generator/models.py`), with three that need a decision rather than a lookup:

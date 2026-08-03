@@ -19,63 +19,27 @@ The fixture is recorded from a real `prisma generate` against
 
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, Iterator
-from pathlib import Path
 
 import pytest
 
 from prisma.generator import models as generator_models
 from prisma.generator.models import (
-    Config,
     Datamodel,
-    data_ctx,
     build_enum_metadata,
     build_schema_metadata,
 )
 
-FIXTURE = Path(__file__).parent / 'data' / 'dmmf_wire_sample.json'
-
-
-class _FakeDatasource:
-    active_provider = 'postgresql'
-
-
-class _FakeDmmf:
-    def __init__(self, datamodel: Datamodel) -> None:
-        self.datamodel = datamodel
-
-
-class _FakeData:
-    """The slice of `GenericData` that `get_datamodel()` reaches for.
-
-    The recorded fixture is trimmed to `datasources` + `dmmf.datamodel`, so it
-    cannot be parsed as a full `PythonData`; the derivation only ever touches
-    those two.
-    """
-
-    def __init__(self, datamodel: Datamodel) -> None:
-        self.dmmf = _FakeDmmf(datamodel)
-        self.datasources = [_FakeDatasource()]
+from ..dmmf_sample import SAMPLE, loaded_datamodel
 
 
 @pytest.fixture(scope='module', name='datamodel')
 def datamodel_fixture() -> Iterator[Datamodel]:
-    if not FIXTURE.exists():  # pragma: no cover
-        pytest.skip(f'wire sample not recorded at {FIXTURE}')
+    if not SAMPLE.exists():  # pragma: no cover
+        pytest.skip(f'wire sample not recorded at {SAMPLE}')
 
-    # `Decimal` fields refuse to validate without the experimental flag, and
-    # constructing a Config is what publishes it to the context.
-    Config(enable_experimental_decimal=True)
-
-    raw = json.loads(FIXTURE.read_text())
-    datamodel = Datamodel.model_validate(raw['dmmf']['datamodel'])
-
-    token = data_ctx.set(_FakeData(datamodel))  # pyright: ignore[reportArgumentType]
-    try:
+    with loaded_datamodel() as datamodel:
         yield datamodel
-    finally:
-        data_ctx.reset(token)
 
 
 @pytest.fixture(scope='module', name='schema')
@@ -125,7 +89,7 @@ def test_primary_key_db_name_is_not_guessed(schema: Dict[str, Any]) -> None:
 
 
 def test_unique_constraint_names_are_two_namespaces(schema: Dict[str, Any]) -> None:
-    (unique,) = schema['Account']['uniques']
+    unique = _unique_named(schema, 'Account', 'slug_role')
     # what `where={'slug_role': ...}` uses
     assert unique['name'] == 'slug_role'
     # what the database calls the constraint — note it uses the *mapped* table
@@ -133,6 +97,29 @@ def test_unique_constraint_names_are_two_namespaces(schema: Dict[str, Any]) -> N
     assert unique['db_name'] == 'accounts_url_slug_role_key'
     assert unique['fields'] == ['slug', 'role']
     assert unique['columns'] == ['url_slug', 'role']
+    assert unique['is_defined_on_field'] is False
+
+
+def test_field_level_unique_is_reported(schema: Dict[str, Any]) -> None:
+    """`@unique` on a field is *not* in `uniqueIndexes`.
+
+    Prisma reports it only as `Field.isUnique`, so a reader that trusts
+    `uniqueIndexes` alone silently loses every single-column unique — and with
+    it the `accounts_email_key` index the database actually has.
+    """
+    unique = _unique_named(schema, 'Account', 'email')
+    assert unique['db_name'] == 'accounts_email_key'
+    assert unique['columns'] == ['email']
+    assert unique['is_defined_on_field'] is True
+
+    # ...including when the column is mapped
+    mapped = _unique_named(schema, 'Profile', 'accountId')
+    assert mapped['db_name'] == 'Profile_account_id_key'
+    assert mapped['columns'] == ['account_id']
+
+
+def _unique_named(schema: Dict[str, Any], model: str, name: str) -> Dict[str, Any]:
+    return next(u for u in schema[model]['uniques'] if u['name'] == name)
 
 
 def test_index_name_is_resolved_when_unnamed(schema: Dict[str, Any]) -> None:

@@ -1,0 +1,69 @@
+"""Loading the recorded DMMF wire sample.
+
+Shared by the generator tests and the SQLAlchemy tests so there is one place
+that knows how the sample is shaped and what context the generator models need
+in order to validate.
+
+The sample is recorded from a real `prisma generate` against
+`tests/test_generation/data/dmmf_wire_sample.prisma`. To re-record::
+
+    cd <a scratch dir with that schema>
+    PRISMA_PY_DEBUG_GENERATOR=1 python -m prisma generate --schema=schema.prisma
+
+then copy `src/prisma/generator/debug-params.json`, keeping only `datasources`
+and `dmmf.datamodel` — `dmmf.schema` is ~420 KB of GraphQL input types that
+nothing here reads.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, List, Iterator
+from pathlib import Path
+from contextlib import contextmanager
+
+from prisma.generator.models import Config, Datamodel, data_ctx
+
+SAMPLE = Path(__file__).parent / 'test_generation' / 'data' / 'dmmf_wire_sample.json'
+
+
+class _FakeDatasource:
+    active_provider = 'postgresql'
+
+
+class _FakeDmmf:
+    def __init__(self, datamodel: Datamodel) -> None:
+        self.datamodel = datamodel
+
+
+class _FakeData:
+    """The slice of `GenericData` the derivation reaches for.
+
+    The recorded sample is trimmed, so it cannot be parsed as a full
+    `PythonData`; `get_datamodel()` and `sql_param()` only ever touch these two
+    attributes.
+    """
+
+    def __init__(self, datamodel: Datamodel) -> None:
+        self.dmmf = _FakeDmmf(datamodel)
+        self.datasources: List[Any] = [_FakeDatasource()]
+
+
+def read_wire_sample() -> Dict[str, Any]:
+    return json.loads(SAMPLE.read_text())
+
+
+@contextmanager
+def loaded_datamodel() -> Iterator[Datamodel]:
+    """Parse the sample and publish it to the generator's context vars."""
+    # `Decimal` fields refuse to validate without the experimental flag, and
+    # constructing a Config is what publishes it to the context.
+    Config(enable_experimental_decimal=True)
+
+    datamodel = Datamodel.model_validate(read_wire_sample()['dmmf']['datamodel'])
+
+    token = data_ctx.set(_FakeData(datamodel))  # pyright: ignore[reportArgumentType]
+    try:
+        yield datamodel
+    finally:
+        data_ctx.reset(token)
