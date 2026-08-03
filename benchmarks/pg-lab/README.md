@@ -140,6 +140,45 @@ What the loop taught us (the rejections are the valuable part):
   async clients are connected at the same time, this flag is worth ~24 MB per
   process regardless of what the composite says.
 
+## Scorecard: where we ended up vs the baseline
+
+One interleaved run of every configuration against the same schema, database
+and workload (`head2head.py --repeats 5 --rounds 25`; raw data in
+`results-scorecard-2026-08-03.json`). `baseline` is what an upstream user gets
+today: default options, two separately generated packages for sync + async.
+
+| variant | RSS (MB) | import (ms) | connect (ms) | queries (ms) | composite | vs baseline |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline | 337.6 | 4208 | 177.0 | 27.96 | 289.6 | — |
+| generator options only | 66.9 | 354 | 147.5 | 27.73 | 99.2 | **−65.7%** |
+| + `slim` backend | 58.3 | 349 | 146.6 | 26.50 | 94.3 | **−67.4%** |
+| + `msgspec` backend | 59.2 | 373 | 154.5 | 27.49 | 98.4 | **−66.0%** |
+| + shared engine + raw decode | 59.2 | 366 | 148.4 | 27.91 | 97.3 | **−66.4%** |
+
+**Headline: 337.6 → 59.2 MB (−82%) and 4.2 s → 0.37 s import (−91%), with query
+latency unchanged.**
+
+Four things this makes honest that a composite number alone would hide:
+
+- **Most of the win is the generator options**, not the exotic backends.
+  `recursive_type_depth = -1` + `minimalRuntime` + `separateModelFiles` +
+  the unified package do 337.6 → 66.9 MB on their own. The alternative model
+  backends add a further ~8 MB (~12%).
+- **`slim` and `msgspec` are effectively tied.** They finish within ~4% of
+  each other and the ordering has flipped between runs (msgspec led the
+  earlier head-to-head, slim leads this one). Pick on constraints, not on the
+  composite: msgspec is faster on bulk deserialization and is a maintained C
+  library; slim has no third-party dependency and slightly lower RSS.
+- **Query latency is flat across every variant** (27.96 → 26.5–27.9 ms). That
+  is the expected result given that ~90% of a query is the engine — see
+  "Where the time actually goes" below. No client-side change moves it.
+- **The two runtime flags look like noise here because this workload does not
+  exercise them.** `PRISMA_PY_SHARED_ENGINE` pays off when both clients are
+  connected *simultaneously* (measured separately: 48 → 24 MB of engine
+  processes); `PRISMA_PY_RAW_DECODE` pays off on large result sets (measured
+  separately: −7 to −14% at 200+ rows). The composite workload connects
+  sequentially and reads 25 rows, so both are correctly invisible to it.
+
 ## Model-backend head-to-head (`head2head.py`)
 
 The ladder measures each candidate once against a moving baseline — right for
