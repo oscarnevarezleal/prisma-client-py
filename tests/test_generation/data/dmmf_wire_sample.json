@@ -1,0 +1,495 @@
+{
+ "datasources": [
+  {
+   "activeProvider": "postgresql",
+   "name": "db",
+   "provider": "postgresql",
+   "schemas": [],
+   "url": {
+    "fromEnvVar": "BENCH_DATABASE_URL",
+    "value": null
+   }
+  }
+ ],
+ "dmmf": {
+  "datamodel": {
+   "enums": [
+    {
+     "dbName": null,
+     "name": "Role",
+     "values": [
+      {
+       "dbName": null,
+       "name": "OWNER"
+      },
+      {
+       "dbName": "administrator",
+       "name": "ADMIN"
+      },
+      {
+       "dbName": null,
+       "name": "VIEWER"
+      }
+     ]
+    }
+   ],
+   "indexes": [
+    {
+     "fields": [
+      {
+       "name": "id"
+      }
+     ],
+     "isDefinedOnField": true,
+     "model": "Account",
+     "type": "id"
+    },
+    {
+     "fields": [
+      {
+       "name": "email"
+      }
+     ],
+     "isDefinedOnField": true,
+     "model": "Account",
+     "type": "unique"
+    },
+    {
+     "dbName": "account_email_created_idx",
+     "fields": [
+      {
+       "name": "email"
+      },
+      {
+       "name": "createdAt"
+      }
+     ],
+     "isDefinedOnField": false,
+     "model": "Account",
+     "type": "normal"
+    },
+    {
+     "fields": [
+      {
+       "name": "slug"
+      },
+      {
+       "name": "role"
+      }
+     ],
+     "isDefinedOnField": false,
+     "model": "Account",
+     "name": "slug_role",
+     "type": "unique"
+    },
+    {
+     "fields": [
+      {
+       "name": "id"
+      }
+     ],
+     "isDefinedOnField": true,
+     "model": "Entry",
+     "type": "id"
+    },
+    {
+     "fields": [
+      {
+       "name": "accountId"
+      }
+     ],
+     "isDefinedOnField": false,
+     "model": "Entry",
+     "type": "normal"
+    },
+    {
+     "fields": [
+      {
+       "name": "left"
+      },
+      {
+       "name": "right"
+      }
+     ],
+     "isDefinedOnField": false,
+     "model": "Composite",
+     "type": "id"
+    }
+   ],
+   "models": [
+    {
+     "dbName": "accounts",
+     "fields": [
+      {
+       "default": {
+        "args": [],
+        "name": "cuid"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": true,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "id",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": true,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "email",
+       "type": "String"
+      },
+      {
+       "dbName": "url_slug",
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "slug",
+       "type": "String"
+      },
+      {
+       "default": "VIEWER",
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "enum",
+       "name": "role",
+       "type": "Role"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "balance",
+       "type": "Decimal"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": false,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "payload",
+       "type": "Json"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": false,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "secret",
+       "type": "Bytes"
+      },
+      {
+       "default": "0",
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "visits",
+       "type": "BigInt"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "tags",
+       "type": "String"
+      },
+      {
+       "default": {
+        "args": [],
+        "name": "now"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "createdAt",
+       "type": "DateTime"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": true,
+       "kind": "scalar",
+       "name": "updatedAt",
+       "type": "DateTime"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "posts",
+       "relationFromFields": [],
+       "relationName": "AccountToEntry",
+       "relationToFields": [],
+       "type": "Entry"
+      }
+     ],
+     "isGenerated": false,
+     "name": "Account",
+     "primaryKey": null,
+     "uniqueFields": [
+      [
+       "slug",
+       "role"
+      ]
+     ],
+     "uniqueIndexes": [
+      {
+       "fields": [
+        "slug",
+        "role"
+       ],
+       "name": "slug_role"
+      }
+     ]
+    },
+    {
+     "dbName": null,
+     "fields": [
+      {
+       "default": {
+        "args": [],
+        "name": "cuid"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": true,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "id",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": true,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "accountId",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "account",
+       "relationFromFields": [
+        "accountId"
+       ],
+       "relationName": "AccountToEntry",
+       "relationOnDelete": "Cascade",
+       "relationToFields": [
+        "id"
+       ],
+       "type": "Account"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "title",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": true,
+       "isRequired": false,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "parentId",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": false,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "parent",
+       "relationFromFields": [
+        "parentId"
+       ],
+       "relationName": "tree",
+       "relationToFields": [
+        "id"
+       ],
+       "type": "Entry"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "children",
+       "relationFromFields": [],
+       "relationName": "tree",
+       "relationToFields": [],
+       "type": "Entry"
+      }
+     ],
+     "isGenerated": false,
+     "name": "Entry",
+     "primaryKey": null,
+     "uniqueFields": [],
+     "uniqueIndexes": []
+    },
+    {
+     "dbName": null,
+     "fields": [
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "left",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "right",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": false,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "note",
+       "type": "String"
+      }
+     ],
+     "isGenerated": false,
+     "name": "Composite",
+     "primaryKey": {
+      "fields": [
+       "left",
+       "right"
+      ],
+      "name": null
+     },
+     "uniqueFields": [],
+     "uniqueIndexes": []
+    }
+   ],
+   "types": []
+  }
+ }
+}

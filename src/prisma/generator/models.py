@@ -493,6 +493,9 @@ class Datasource(BaseModel):
     active_provider: str = FieldInfo(alias='activeProvider')
     url: 'OptionalValueFromEnvVar'
 
+    # `schemas = [...]` from the multiSchema preview feature
+    schemas: List[str] = FieldInfo(default_factory=list)
+
     source_file_path: Optional[Path] = FieldInfo(alias='sourceFilePath')
 
 
@@ -823,9 +826,42 @@ class DMMF(BaseModel):
     prisma_schema: PrismaSchema = FieldInfo(alias='schema')
 
 
+class IndexField(BaseModel):
+    """One column within an index, with its per-column modifiers."""
+
+    name: str
+    sort_order: Optional[str] = FieldInfo(alias='sortOrder', default=None)
+    length: Optional[int] = None
+    operator_class: Optional[str] = FieldInfo(alias='operatorClass', default=None)
+
+
+class Index(BaseModel):
+    """An entry from `datamodel.indexes`.
+
+    This is the *only* place Prisma reports `@@index`, index `map:`/`sort:`/
+    `length:`/`type:` modifiers, and the resolved database-level name of a
+    unique or primary key constraint. It is sent on the wire for every schema;
+    it was previously discarded.
+    """
+
+    model: str
+    # 'id' | 'unique' | 'normal' | 'fulltext'
+    type: str
+    is_defined_on_field: bool = FieldInfo(alias='isDefinedOnField')
+    name: Optional[str] = None
+    db_name: Optional[str] = FieldInfo(alias='dbName', default=None)
+    algorithm: Optional[str] = None
+    clustered: Optional[bool] = None
+    fields: List['IndexField'] = FieldInfo(default_factory=list)
+
+
 class Datamodel(BaseModel):
     enums: List['Enum']
     models: List['Model']
+
+    # `@@index` / `@@fulltext` / resolved constraint names live here and nowhere
+    # else in the DMMF
+    indexes: List['Index'] = FieldInfo(default_factory=list)
 
     # not implemented yet
     types: List[object]
@@ -874,6 +910,9 @@ class Model(BaseModel):
     is_generated: bool = FieldInfo(alias='isGenerated')
     compound_primary_key: Optional['PrimaryKey'] = FieldInfo(alias='primaryKey')
     unique_indexes: List['UniqueIndex'] = FieldInfo(alias='uniqueIndexes')
+    # the legacy `List[List[str]]` form of the same information; it is the only
+    # place field *order* within a compound unique is guaranteed
+    unique_fields: List[List[str]] = FieldInfo(alias='uniqueFields', default_factory=list)
     all_fields: List['Field'] = FieldInfo(alias='fields')
 
     # stores the parsed DSL, not an actual field defined by prisma
@@ -1027,6 +1066,21 @@ class Field(BaseModel):
     # TODO: switch to enums
     kind: str
     type: str
+
+    # `@map("col")` — the physical column name. Prisma omits this key entirely
+    # when the field is not mapped, hence Optional with a None default.
+    db_name: Optional[str] = FieldInfo(alias='dbName', default=None)
+
+    # `@db.VarChar(255)` -> ('VarChar', ['255']).
+    #
+    # NOTE: verified empirically that Prisma does *not* send this on the wire for
+    # the current generator protocol — there are zero `nativeType` keys in a real
+    # payload even for a schema using `@db.VarChar`/`@db.Decimal`. It is only
+    # recoverable by lexing the raw schema text, which `GenericData.datamodel`
+    # does carry. The field is modelled here so that a future Prisma release
+    # sending it is picked up automatically (and so the completeness test would
+    # notice), but consumers must not assume it is populated.
+    native_type: Optional[Tuple[str, List[str]]] = FieldInfo(alias='nativeType', default=None)
 
     is_id: bool = FieldInfo(alias='isId')
     is_list: bool = FieldInfo(alias='isList')
