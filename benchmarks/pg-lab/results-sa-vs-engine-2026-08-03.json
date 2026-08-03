@@ -1,0 +1,41 @@
+{
+ "rounds": 100,
+ "queries": [
+  {
+   "query": "find_many_include",
+   "prisma_ms": 4.066,
+   "sqlalchemy_ms": 2.217,
+   "prisma_p90_ms": 5.066,
+   "sqlalchemy_p90_ms": 2.788,
+   "speedup": 1.83,
+   "saved_pct": 45.5
+  },
+  {
+   "query": "find_unique",
+   "prisma_ms": 1.841,
+   "sqlalchemy_ms": 0.445,
+   "prisma_p90_ms": 2.24,
+   "sqlalchemy_p90_ms": 0.604,
+   "speedup": 4.14,
+   "saved_pct": 75.8
+  },
+  {
+   "query": "count",
+   "prisma_ms": 1.432,
+   "sqlalchemy_ms": 0.438,
+   "prisma_p90_ms": 1.857,
+   "sqlalchemy_p90_ms": 0.564,
+   "speedup": 3.27,
+   "saved_pct": 69.4
+  },
+  {
+   "query": "query_raw",
+   "prisma_ms": 1.148,
+   "sqlalchemy_ms": 0.376,
+   "prisma_p90_ms": 1.502,
+   "sqlalchemy_p90_ms": 0.476,
+   "speedup": 3.05,
+   "saved_pct": 67.2
+  }
+ ]
+}

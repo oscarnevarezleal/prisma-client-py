@@ -85,6 +85,58 @@ eliminating *all* client deserialization would still leave ~88% untouched.
 
 ---
 
+## What replacing the engine actually buys (measured, not projected)
+
+The 8–12× figure above compares Prisma against hand-written psycopg, which
+**overstates** what a SQLAlchemy backend can recover: SQLAlchemy has its own
+statement-compilation cost that psycopg does not pay.
+
+Now that `prisma.sa` exists, the honest comparison is available — same four
+queries, same rows, same database, Prisma client vs SQLAlchemy Core over the
+tables built from the same schema metadata a Stage 3 compiler would use
+(`sa_vs_engine.py`, sync client, 100 rounds, interleaved and direction-alternated):
+
+| query | Prisma | SQLAlchemy Core | saved |
+| --- | ---: | ---: | ---: |
+| `find_many` + 2 includes, 25 rows | 4.07 ms | 2.22 ms | **45%** |
+| `find_unique` | 1.84 ms | 0.45 ms | **76%** |
+| `count` with a filter | 1.43 ms | 0.44 ms | **69%** |
+| `query_raw` (identical SQL both sides) | 1.15 ms | 0.38 ms | **67%** |
+| **total** | **8.49 ms** | **3.48 ms** | **59%** |
+
+Stable at 59–62% across repeated runs. Both sides are asserted to return
+identical rows before timing — a benchmark where one side quietly returns
+nothing is not fast, it is meaningless.
+
+Three things worth reading off this table:
+
+- **`query_raw` is the cleanest measurement here.** The SQL is byte-identical on
+  both sides and there is no GraphQL planning to do, so the entire 0.77 ms
+  difference is engine transport: the subprocess hop and HTTP round-trip.
+- **Includes recover the least (45%).** A to-many include is where the engine
+  does real work, and where a translation is most likely to lose ground rather
+  than gain it. It is the number to watch as the compiler grows.
+- **Record construction is not the story.** Building 25 record objects from the
+  rows costs 0.12 ms — the step the SQLAlchemy column above does not pay for.
+  Adding it back still leaves ~44% saved on the include query.
+
+Connecting is the larger ratio, because Prisma has to spawn the engine
+subprocess and wait for it to become ready:
+
+| | Prisma | SQLAlchemy |
+| --- | ---: | ---: |
+| connect | 54–72 ms | 6–8 ms |
+
+Memory is close to a wash, which was the surprise. Dropping the engine removes
+a **24.7 MB** subprocess, but importing SQLAlchemy costs **+26.1 MB** and 157 ms.
+For a single client that is roughly neutral. It only becomes a real saving in
+the dual sync+async setup this fork targets, where SQLAlchemy is imported once
+and shared while Prisma otherwise pays for two engine subprocesses.
+
+**So: the case for replacing the engine is latency and startup, not footprint.**
+
+---
+
 ## Negative results
 
 These are kept deliberately. They cost real time to discover and are cheaper to
@@ -151,15 +203,15 @@ model-rebuild ordering bug by touching every model as a side effect. Fixed in
 
 ## If you are deciding whether to migrate to SQLAlchemy
 
-The 90% engine overhead is the strongest performance argument for leaving, and
-no amount of client-side work substitutes for it — a driver-level stack removes
-the 90% rather than optimizing the 10%.
+The measured recovery is **59% of query time and ~8× faster connects** (table
+above), and no amount of client-side work substitutes for it — a driver-level
+stack removes the engine rather than optimizing around it.
 
-But it cuts both ways: **2 ms per query is irrelevant to most request paths**,
-and you would be trading away schema-as-source-of-truth, typed query arguments
-and Prisma's migration tooling to recover it. Check whether your latency
-actually lives in queries first, and note that `query_raw` already reclaims
-28–46% of it while keeping typed records.
+But it cuts both ways: **5 ms per query is irrelevant to most request paths**,
+memory is roughly a wash, and you would be trading away schema-as-source-of-truth,
+typed query arguments and Prisma's migration tooling to recover it. Check whether
+your latency actually lives in queries first, and note that `query_raw` already
+reclaims 28–46% of it while keeping typed records.
 
 See [`migrating-to-sqlalchemy.md`](migrating-to-sqlalchemy.md) for the route if
 you decide to go.
@@ -177,6 +229,7 @@ python benchmarks/pg-lab/optimize_loop.py  --workdir . --repeats 3   # the auton
 python benchmarks/pg-lab/head2head.py      --workdir . --repeats 5   # scorecard vs baseline
 python benchmarks/pg-lab/rawdecode_bench.py --workdir . --passes 9   # raw-decode A/B
 python benchmarks/pg-lab/where_time_goes.py --workdir .              # db vs engine attribution
+python benchmarks/pg-lab/sa_vs_engine.py   --workdir . --package pkg_sync   # prisma vs SQLAlchemy Core
 ```
 
 Raw data for every table above is committed alongside the harnesses as
