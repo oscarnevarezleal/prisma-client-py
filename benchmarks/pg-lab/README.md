@@ -178,6 +178,55 @@ Takeaways:
   structs directly, and `to_pydantic()` returns a real `pydantic.BaseModel`
   (lazily created, cached twin class) for integrations that demand one.
 
+## One-pass response decoding (`rawdecode_bench.py`)
+
+`PRISMA_PY_RAW_DECODE=1` (msgspec backend only) decodes the engine's response
+bytes straight into record structs, skipping the `bytes -> dict -> records` hop
+the client otherwise pays on every query.
+
+**Profile it before you believe the microbenchmark.** In isolation msgspec
+decodes this payload shape ~6x faster than `json.loads` + build. End-to-end
+that is much smaller, because the engine round-trip dominates:
+
+| stage, `find_many(take=25, include=…)` | time | share |
+| --- | ---: | ---: |
+| HTTP round-trip (engine plan + DB + serialize + socket) | 3.75 ms | **93.4%** |
+| `json.loads(bytes)` -> dict | 0.16 ms | 4.0% |
+| dict -> records | 0.10 ms | 2.6% |
+
+Deserialization is only ~5% of a small query — but its share grows with the
+result set while the round-trip's fixed cost does not (1 row: 1.4% deser;
+400 rows: 17%). So this is a **bulk-read optimization**, not a general one.
+
+Measured A/B, interleaved passes (`rawdecode_bench.py --passes 9`, two
+independent runs; raw data in `results-rawdecode-2026-08-03.json`):
+
+| result set | payload | change |
+| --- | ---: | ---: |
+| 1 row | 0.3 KB | +2 to +5% (below threshold → dict path) |
+| 25 rows | 6 KB | −1 to −2% (noise) |
+| 25 rows + include | 18 KB | −4 to +1% (noise) |
+| 200 rows | 50 KB | **−10%** (both runs) |
+| 400 rows | 100 KB | **−8 to −14%** |
+| 400 rows + include | 285 KB | **−7 to −13%** |
+
+Because small responses were measurably *slower* (the typed decoder's fixed
+dispatch cost exceeds what it saves on a 0.3 KB body), the decode path is gated
+on response size: below `PRISMA_PY_RAW_DECODE_MIN_BYTES` (default 20000) the
+plain path runs instead. That turns "faster on bulk, slower on single-row" into
+"faster on bulk, neutral elsewhere".
+
+Correctness is preserved across the whole surface: relations via `include`,
+`Decimal`/`datetime` coercion, `None` results, engine errors (which fall back
+to the normal error path), transactions, and `count`/`group_by` — those return
+aggregates rather than records, so they are excluded from the fast path by
+method name rather than by a failed decode.
+
+**The real frontier is the round-trip, not the client.** At 93% of query time,
+nothing in Python can move it; the remaining levers are fewer round-trips
+(`batch_()`, fewer N+1 patterns) or a different transport than the HTTP binary
+engine.
+
 ## Notes
 
 - Python RSS only; the Rust query engines are separate processes (~22 MB each,

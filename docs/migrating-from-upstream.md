@@ -32,6 +32,23 @@ Two further opt-ins are runtime environment flags rather than generator options:
 | --- | --- | --- |
 | `PRISMA_PY_SHARED_ENGINE=1` | off | sync + async clients for the same schema/datasource share one query-engine process (refcounted); saves ~an engine process (~20-25 MB) and a spawn per extra client connected at the same time |
 | `PRISMA_PY_FAST_PARSE=1` | off | deserialize trusted engine responses without a validation pass. **Measured slower than pydantic-core validation on Pydantic v2** — kept for completeness, not recommended |
+| `PRISMA_PY_RAW_DECODE=1` | off | decode engine response bytes straight into records, skipping the intermediate dict. Requires `modelBackend = "msgspec"`; a no-op otherwise. **7-14% faster on bulk reads** (200+ rows), neutral on small ones — see below |
+
+### `PRISMA_PY_RAW_DECODE` (runtime flag, msgspec backend only)
+
+Normally a query costs `bytes -> dict -> records`. With this flag the client
+decodes the engine's raw bytes directly into record structs in one pass.
+
+It is a **bulk-read** optimization. Deserialization is only ~5% of a small
+query (the engine round-trip is ~93%), but its share grows with result size,
+so the win lands where result sets are large: ~10% at 200 rows, 7-14% at 400.
+Small responses stay on the plain path automatically — below
+`PRISMA_PY_RAW_DECODE_MIN_BYTES` (default `20000`) the typed decoder's fixed
+cost would exceed its saving — so enabling it never makes small queries slower.
+
+Aggregate methods (`count`, `group_by`, `*_many`) are excluded by design; they
+return counts rather than records. Errors, transactions, `include` relations
+and `Decimal`/`datetime` coercion all behave identically to the dict path.
 
 ### `lazyActions` (default: off)
 

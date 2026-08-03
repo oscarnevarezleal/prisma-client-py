@@ -57,7 +57,7 @@ class SyncAbstractEngine(BaseAbstractEngine):
         ...
 
     @abstractmethod
-    def query(self, content: str, *, tx_id: TransactionId | None) -> Any:
+    def query(self, content: str, *, tx_id: TransactionId | None, decoder: Any = None) -> Any:
         """Execute a GraphQL query.
 
         This method expects a JSON object matching this structure:
@@ -123,7 +123,7 @@ class AsyncAbstractEngine(BaseAbstractEngine):
         ...
 
     @abstractmethod
-    async def query(self, content: str, *, tx_id: TransactionId | None) -> Any:
+    async def query(self, content: str, *, tx_id: TransactionId | None, decoder: Any = None) -> Any:
         """Execute a GraphQL query.
 
         This method expects a JSON object matching this structure:

@@ -276,6 +276,7 @@ class SyncQueryEngine(BaseQueryEngine, SyncHTTPEngine):
         content: str,
         *,
         tx_id: TransactionId | None,
+        decoder: Any = None,
     ) -> Any:
         headers: dict[str, str] = {}
         if tx_id is not None:
@@ -286,6 +287,7 @@ class SyncQueryEngine(BaseQueryEngine, SyncHTTPEngine):
             '/',
             content=content,
             headers=headers,
+            decoder=decoder,
         )
 
     @override
@@ -440,6 +442,7 @@ class AsyncQueryEngine(BaseQueryEngine, AsyncHTTPEngine):
         content: str,
         *,
         tx_id: TransactionId | None,
+        decoder: Any = None,
     ) -> Any:
         headers: dict[str, str] = {}
         if tx_id is not None:
@@ -450,6 +453,7 @@ class AsyncQueryEngine(BaseQueryEngine, AsyncHTTPEngine):
             '/',
             content=content,
             headers=headers,
+            decoder=decoder,
         )
 
     @override

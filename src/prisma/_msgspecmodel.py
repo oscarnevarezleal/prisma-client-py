@@ -29,7 +29,7 @@ import json
 import decimal
 import datetime
 import importlib
-from typing import Any, Dict, List, Type, TypeVar, ClassVar, Optional
+from typing import Any, Dict, List, Type, Union, TypeVar, ClassVar, Optional
 
 try:
     import msgspec
@@ -72,6 +72,39 @@ def parse(model: Type[_RecordT], data: Any) -> _RecordT:
     # strict=False enables the coercions the wire protocol needs:
     # ISO strings -> datetime, strings -> int (BigInt) / Decimal
     return msgspec.convert(data, type=model, strict=False, dec_hook=_dec_hook)
+
+
+_ENVELOPE_DECODERS: Dict[type, Any] = {}
+
+
+def envelope_decoder(model: type) -> Any:
+    """A cached decoder for `{"data": {"result": ...}}` typed to `model`.
+
+    Decodes the engine's raw response bytes straight into record structs,
+    skipping the intermediate `bytes -> dict -> records` hop. `result` is
+    typed as a union so one decoder serves list-returning, single-returning
+    and null results — those are an array, an object and null on the wire, so
+    msgspec can discriminate them without tagging.
+
+    Only valid for *model-returning* methods: a `count`/`group_by` payload
+    would fail to decode against this type (which is why the caller gates on
+    the method name rather than relying on a fallback).
+    """
+    decoder = _ENVELOPE_DECODERS.get(model)
+    if decoder is None:
+        result_t = Optional[Union[List[model], model]]  # type: ignore[valid-type]
+        result_struct = msgspec.defstruct(f'{model.__name__}Result', [('result', result_t, None)])
+        envelope = msgspec.defstruct(
+            f'{model.__name__}Envelope',
+            [('data', Optional[result_struct], None), ('errors', Optional[List[Any]], None)],
+        )
+        decoder = msgspec.json.Decoder(envelope, dec_hook=_dec_hook, strict=False)
+        _ENVELOPE_DECODERS[model] = decoder
+    return decoder
+
+
+def supports_raw_decode(model: Any) -> bool:
+    return isinstance(model, type) and getattr(model, '__prisma_struct__', False)
 
 
 class PrismaRecord(msgspec.Struct, kw_only=True):
