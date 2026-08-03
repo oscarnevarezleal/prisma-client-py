@@ -6,10 +6,11 @@ not in this document — if you cannot find one, that is a **STOP**, and STOP
 means hand back to a human with the specific reason, not guess.
 
 Every translation below was executed against a live PostgreSQL database with
-both Prisma and SQLAlchemy and the results compared row for row. The harness is
-`benchmarks/pg-lab/verify_translations.py` and it is the source of truth for
-this file. A translation not in the table has not been verified and must not be
-emitted.
+both Prisma and SQLAlchemy and the results compared row for row. The harnesses
+are `benchmarks/pg-lab/verify_translations.py` for reads and
+`benchmarks/pg-lab/verify_writes.py` for writes, and they are the source of
+truth for this file. A translation not in the table has not been verified and
+must not be emitted.
 
 ---
 
@@ -296,6 +297,210 @@ on `_`, which breaks on any field containing an underscore.
 For `contains`/`startsWith`/`endsWith`, escape `%` and `_` in the user-supplied
 string, or a value containing them silently matches more rows than Prisma would.
 
+#### Writes — one row, scalar columns
+
+Flat only: `data` holds scalar and enum fields. Anything naming a relation is a
+STOP (§5), and `values_for_create` raises `LookupError` naming the field rather
+than guessing.
+
+```python
+from prisma.sa import values_for_create, values_for_update
+```
+
+Both take Prisma **field** names and return **column** names, with `@map`
+resolved, enum members mapped to their stored labels, and the values Prisma
+generates in the client — `cuid()`, `uuid()`, `nanoid()`, `now()`, `@updatedAt`
+— filled in. `D` below is the `data` mapping unchanged.
+
+| Prisma | SQLAlchemy Core |
+| --- | --- |
+| `db.post.create(data=D)` | `conn.execute(sa.insert(post).values(**values_for_create('Post', D)))` |
+| `db.post.create(...)`, using the returned row | `sa.insert(post).values(...).returning(*post.c)` → `.mappings().one()` |
+| `db.post.update(where={'id': x}, data=D)` | `sa.update(post).where(post.c.id == x).values(**values_for_update('Post', D))` |
+| `db.post.update(where={'siteId_slug': {'siteId': a, 'slug': b}}, data=D)` | `...where(sa.and_(post.c.siteId == a, post.c.slug == b))` |
+| `db.post.update(...)`, using the returned row | `.returning(*post.c)` → `.mappings().first()` |
+| `db.post.delete(where={'id': x})` | `conn.execute(sa.delete(post).where(post.c.id == x))` |
+| `db.post.delete(...)`, using the returned row | `.returning(*post.c)` → `.mappings().first()` |
+
+**Do not write the INSERT by hand.** `@default(cuid())` and `@updatedAt` leave no
+trace in the DDL, so a bare `sa.insert(post).values(slug=..., title=...)` sends
+no id and no `updatedAt`. SQLAlchemy warns first — *"Column 'Post.id' is marked
+as a member of the primary key … but has no … default generator"* — and
+PostgreSQL then rejects the row. Phase 3's Alembic gate cannot catch this:
+nothing about the schema is wrong.
+
+**`.first()`, not `.one()`.** `update` and `delete` return `None` when nothing
+matches; `prisma-client-py` catches `RecordNotFoundError` and a call site may be
+relying on it. Measured against a `where` that matches no row:
+
+| | result |
+| --- | --- |
+| `db.post.update(...)` / `db.post.delete(...)` | `None` |
+| `.returning(*post.c)` then `.mappings().first()` | `None` ✅ |
+| `.returning(*post.c)` then `.mappings().one()` | raises ❌ |
+
+Nothing is written on a miss. `values_for_update` generates a fresh `@updatedAt`
+before the statement runs, but with `rowcount` 0 it never reaches a row — the
+same as Prisma, which leaves the table untouched.
+
+**The row is identical; the Python objects are not.** Prisma parses the engine's
+response, SQLAlchemy decodes the column type:
+
+| column | Prisma's return value | a `RETURNING` row |
+| --- | --- | --- |
+| enum | the generated member, `Role.ADMIN` | the stored label, `'administrator'` |
+| `DateTime` | aware, UTC | naive, for `timestamp without time zone` |
+
+It is the same row either way. But under `@map` the two enum strings genuinely
+differ, so a comparison that used to match stops matching, and the timestamps
+need `value.astimezone(timezone.utc).replace(tzinfo=None)` before they compare
+equal.
+
+**Pass a naive UTC datetime for an explicit `DateTime`.** `values_for_*`
+normalises the timestamps it *generates*; one the caller supplies is passed
+through, and PostgreSQL converts an aware value into a `timestamp without time
+zone` column using the session's `TimeZone`. Prisma never does. Measured with
+the session at `America/New_York` and `2020-06-01T12:00Z`:
+
+| written by | stored |
+| --- | --- |
+| Prisma, aware value | `12:00` |
+| `values_for_create`, aware value | `08:00` ❌ |
+| `values_for_create`, naive UTC value | `12:00` ✅ |
+
+**`where` by a compound key — read the members, from the right place.** A
+compound `@@unique` and a compound `@@id` are both addressed by a Prisma
+identifier (`siteId_slug`, `left_right`) and they live in different keys:
+
+```python
+from prisma._schema import model_schema
+# @@unique([siteId, slug])
+next(u for u in model_schema('Post')['uniques'] if u['name'] == 'siteId_slug')['columns']
+# @@id([left, right]) — NOT in ['uniques'], which is empty for such a model
+model_schema('Composite')['primary_key']['columns']
+```
+
+Use `columns`, never `fields` and never the constraint name split on `_`. On
+`@@unique([slug, role])` where `slug` is `@map("url_slug")` the columns are
+`['url_slug', 'role']`, and `post.c['slug']` does not exist.
+
+**A unique violation raises different classes.**
+`prisma.errors.UniqueViolationError` becomes `sqlalchemy.exc.IntegrityError`;
+the only portable identification is the SQLSTATE,
+`exc.orig.sqlstate == '23505'`. Neither writes a partial row.
+
+**`ON DELETE` is the database's.** A flat `sa.delete(...)` cascades exactly as
+Prisma's `delete` does, because in both cases the foreign key performs it. There
+is no client-side child deletion to reproduce.
+
+#### Bulk writes
+
+The three set-based writes. All of them return a **count**, never rows, and all
+of them go through the same `values_for_create` / `values_for_update` as the
+single-row writes above.
+
+`W'` below is the §4.1 where-operator translation of `W`. Nothing about it
+changes for a write; the same `AND`/`OR`/`in`/`startsWith` forms apply.
+
+| Prisma | SQLAlchemy |
+| --- | --- |
+| `db.post.create_many(data=[d1, d2])` | `insert_many(conn, post, 'Post', [d1, d2])` — below |
+| `db.post.create_many(data=[...], skip_duplicates=True)` | `insert_many(..., skip_duplicates=True)` → `ON CONFLICT DO NOTHING` |
+| `db.post.update_many(where=W, data=D)` | `conn.execute(sa.update(post).where(W').values(**values_for_update('Post', D))).rowcount` |
+| `db.post.delete_many(where=W)` | `conn.execute(sa.delete(post).where(W')).rowcount` |
+| `db.post.delete_many()` (no `where`) | `conn.execute(sa.delete(post)).rowcount` — empties the table |
+
+```python
+import itertools
+import datetime
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+def insert_many(conn, table, model, data, *, skip_duplicates=False):
+    moment = datetime.datetime.now(datetime.timezone.utc)
+    rows = [values_for_create(model, item, moment=moment) for item in data]
+
+    inserted = 0
+    for _, group in itertools.groupby(sorted(rows, key=lambda r: sorted(r)),
+                                      key=lambda r: tuple(sorted(r))):
+        batch = list(group)
+        if skip_duplicates:
+            statement = postgresql.insert(table).values(batch).on_conflict_do_nothing()
+        else:
+            statement = sa.insert(table).values(batch)
+        inserted += len(conn.execute(statement.returning(*table.primary_key.columns)).fetchall())
+    return inserted
+```
+
+Every line of that function is load-bearing. What was measured:
+
+**One `moment` for the whole batch.** `create_many` stamps every row in a batch
+with a **single** instant, not one each — and gives every row its **own** id.
+Calling `values_for_create` once per row without passing `moment` produces a
+fresh reading of the clock per row, which is invisible in any single-row test
+and shows up as rows of the same batch disagreeing about `createdAt`.
+
+| batch of 5, measured | distinct ids | distinct `createdAt` | `createdAt == updatedAt` |
+| --- | ---: | ---: | --- |
+| Prisma `create_many` | 5 | 1 | yes |
+| `insert_many` (shared `moment`) | 5 | 1 | yes ✅ |
+
+**One INSERT per distinct key set.** `sa.insert(t).values([...])` compiles its
+`VALUES` clause from the **first** mapping, so a key that only later rows carry
+is dropped — with no error, and with the right row count. Same for
+`conn.execute(sa.insert(t), [...])`. Two rows, the second one alone setting
+`role`:
+
+| | row 2's `role` |
+| --- | --- |
+| Prisma | `ADMIN` |
+| one INSERT per key set | `ADMIN` ✅ |
+| a single `.values([...])` | `VIEWER` ❌, silently |
+
+**The count comes from `RETURNING`.** `CursorResult.rowcount` is `-1` for an
+INSERT under psycopg, so it cannot be the source of the count.
+`.returning(*table.primary_key.columns)` and `len(...)` can, and it is also what
+makes `skip_duplicates` countable: `RETURNING` on `ON CONFLICT DO NOTHING`
+yields only the rows actually inserted. `rowcount` **is** correct for UPDATE and
+DELETE, which is why they use it.
+
+`skip_duplicates` matches Prisma both against an already-present row and against
+a duplicate appearing twice *inside* the batch — PostgreSQL resolves the latter
+within the one statement, so no de-duplication is needed first. Without
+`skip_duplicates` a conflict aborts the **whole** batch and inserts nothing;
+Prisma raises `UniqueViolationError` and SQLAlchemy raises `IntegrityError`.
+
+**`update_many` counts matched rows, not changed rows, and stamps all of them.**
+`@updatedAt` moves on every matched row including those whose values did not
+actually change, and the whole matched set gets one instant, because it is one
+statement. Four rows matched, two of which already held the value being written:
+
+| | returned | `@updatedAt` moved | distinct `updatedAt` | `createdAt` |
+| --- | ---: | ---: | ---: | --- |
+| Prisma `update_many` | 4 | 4 | 1 | untouched |
+| `sa.update(...)` + `values_for_update` | 4 (`rowcount`) | 4 | 1 | untouched ✅ |
+
+Matching zero rows returns `0` from both and moves nothing.
+
+**A `where` on a `@map`ped enum needs translating.** Prisma addresses a member
+by its schema name (`ADMIN`); the column only ever holds the mapped label, and
+binding `'ADMIN'` is rejected by the enum type outright. `values_for_create` /
+`values_for_update` do this for the `data` side; the `where` side is yours:
+
+```python
+from prisma._schema import enum_label
+accounts.c.role == enum_label('Role', 'ADMIN')   # -> 'administrator'
+```
+
+**Wrap a batch in a transaction.** Prisma's `create_many` is one unit;
+`insert_many` is one statement *per key set*, so on autocommit a failure in the
+second group would leave the first committed. Use `engine.begin()` or an
+explicit `conn.begin()`.
+
+Still **STOP** for bulk writes: nested writes inside `create_many` data, and
+atomic operations in `update_many` data (`{'increment': 1}`) — `values_for_update`
+refuses the latter by name rather than writing the mapping into the column.
+
 #### Aggregates
 
 | Prisma | SQLAlchemy |
@@ -376,8 +581,8 @@ in place, record it in the report, and continue with the others.
 
 | Operation | Why |
 | --- | --- |
-| `create`, `create_many`, `update`, `update_many`, `upsert`, `delete`, `delete_many` | Not verified. Writes involve client-side default generation (`cuid()`, `uuid()`, `@updatedAt`) that Prisma fills in and SQLAlchemy will not. |
-| Nested writes (`create: {..., posts: {create: [...]}}`) | Requires a recursive planner. Ordering, FK satisfaction and rollback are all unsolved here. |
+| `upsert` | Not verified. `create` / `update` / `delete` and `create_many` / `update_many` / `delete_many` **are** — see §4.1 — but only for scalar columns. |
+| Nested writes (`create: {..., posts: {create: [...]}}`) | Requires a recursive planner. Ordering, FK satisfaction and rollback are all unsolved here. `values_for_create` raises `LookupError` on a relation field rather than half-translating one. |
 | `connect` / `disconnect` / `set` / `connectOrCreate` | `disconnect` and `set` are **illegal** against a NOT NULL foreign key — Prisma raises P2014. Check `relation(...)['fk_required']` before assuming otherwise. |
 | `aggregate()` (`_sum`, `_avg`, `_min`, `_max`) | Not verified. |
 | `db.tx()` / transactions | Prisma's transaction semantics and SQLAlchemy's do not map one-to-one. |
@@ -431,10 +636,12 @@ Stated so an agent does not go looking for it:
   check in.
 - **No query compiler.** Prisma calls are not automatically redirected;
   §4 is a hand translation.
-- **No verified write translations.** §5 lists them as STOP. On a typical
-  application that is the majority of call sites — one field report measured
-  62% — so expect Phase 3 (Alembic owning DDL) to be the deliverable and Phase 4
-  to be partial.
+- **Writes are only partly verified.** Single-row `create` / `update` / `delete`
+  and the set-based `create_many` / `update_many` / `delete_many`, over scalar
+  columns, are in §4.1. Everything else — nested writes, `connect`, `upsert`,
+  atomic operations — is still §5. On a typical application writes are the
+  majority of call sites (one field report measured 62%), so expect Phase 4 to
+  be partial and say so in the report.
 - **PostgreSQL only.**
 
 ### Prisma CLI version
