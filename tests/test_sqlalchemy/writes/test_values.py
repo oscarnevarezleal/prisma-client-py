@@ -31,8 +31,12 @@ def schema_fixture(installed: None) -> Iterator[Dict[str, Any]]:
     import prisma.metadata
 
     with pytest.MonkeyPatch.context() as patch:
-        schema = dict(prisma.metadata.SCHEMA)  # pyright: ignore[reportAttributeAccessIssue]
-        patch.setattr(prisma.metadata, 'SCHEMA', schema)
+        # `getattr`, not attribute access: the dev client is generated *without*
+        # `schemaMetadata`, so `SCHEMA` genuinely does not exist on it and both
+        # type checkers are right to say so. The fixtures that populate it run
+        # first; the default keeps the failure legible if one does not.
+        schema = dict(getattr(prisma.metadata, 'SCHEMA', {}))
+        patch.setattr(prisma.metadata, 'SCHEMA', schema, raising=False)
         yield schema
 
 
