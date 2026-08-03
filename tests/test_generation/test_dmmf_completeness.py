@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from prisma._compat import model_fields
+from prisma._compat import model_fields, model_parse_strict
 from prisma.generator.models import (
     Enum,
     Field,
@@ -123,7 +123,7 @@ def test_indexes_are_actually_parsed(wire: Dict[str, Any]) -> None:
     `datamodel.indexes` was on the wire and discarded, which made every
     `@@index` invisible to the generator.
     """
-    datamodel = Datamodel.model_validate(wire['dmmf']['datamodel'])
+    datamodel = model_parse_strict(Datamodel, wire['dmmf']['datamodel'])
     raw = wire['dmmf']['datamodel'].get('indexes', [])
     assert len(datamodel.indexes) == len(raw)
     if raw:

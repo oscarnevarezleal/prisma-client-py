@@ -358,6 +358,13 @@ class Runner:
         # not dynamically generated which means it will stay the same across database providers
         pyright_config['exclude'].append(str(Path(pkg_location).joinpath('mypy.py')))
 
+        # exclude the modules that are gated behind optional extras — this session
+        # installs the client without them, so Pyright would only report that their
+        # third-party imports are unresolved. They are type checked properly by the
+        # `lint` session, which installs `.[msgspec,sqlalchemy]`.
+        pyright_config['exclude'].append(str(Path(pkg_location).joinpath('_msgspecmodel.py')))
+        pyright_config['exclude'].append(str(Path(pkg_location).joinpath('sa')))
+
         # exclude our vendored code
         # this needs to explicitly be the package location as otherwise our `include`
         # of the package directory overrides other `exclude`s for the vendor dir

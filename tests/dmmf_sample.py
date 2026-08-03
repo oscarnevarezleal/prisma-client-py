@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Iterator, cast
 from pathlib import Path
 from contextlib import contextmanager
 
+from prisma._compat import model_parse_strict
 from prisma.generator.models import Config, Datamodel, data_ctx
 
 SAMPLE = Path(__file__).parent / 'test_generation' / 'data' / 'dmmf_wire_sample.json'
@@ -70,7 +71,7 @@ def loaded_datamodel() -> Iterator[Datamodel]:
     # constructing a Config is what publishes it to the context.
     Config(enable_experimental_decimal=True)
 
-    datamodel = Datamodel.model_validate(read_wire_sample()['dmmf']['datamodel'])
+    datamodel = model_parse_strict(Datamodel, read_wire_sample()['dmmf']['datamodel'])
 
     # `_FakeData` is deliberately only the slice of `GenericData` the derivation
     # reads (see its docstring), so it cannot satisfy the context var's type.
