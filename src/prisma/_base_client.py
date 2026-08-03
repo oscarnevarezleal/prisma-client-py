@@ -51,7 +51,7 @@ _RAW_DECODE_ENABLED: bool = os.environ.get('PRISMA_PY_RAW_DECODE', '') not in ('
 # (method, model) -> decoder or None. This sits on the hot path of every query,
 # so the answer is memoized rather than recomputed (and the msgspec import kept
 # out of it): the pairs are bounded by methods x models.
-_DECODER_CACHE: dict[tuple[str, Any], Any] = {}
+_DECODER_CACHE: dict[tuple[str, Any], object | None] = {}
 
 
 def _response_decoder(method: str, model: type[BaseModel] | None) -> object | None:

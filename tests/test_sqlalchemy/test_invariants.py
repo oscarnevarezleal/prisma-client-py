@@ -12,7 +12,7 @@ They are the cheapest thing in the suite to run against a new schema: swap the
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 import sqlalchemy as sa
 
@@ -44,7 +44,7 @@ def _referenced_model(model: str, relation: Dict[str, Any]) -> str:
     its `referenced_fields` are this model's own fields. Getting this backwards
     is invisible in a schema where both models happen to have an `id`.
     """
-    return relation['to'] if relation['owner'] else model
+    return cast(str, relation['to']) if relation['owner'] else model
 
 
 def test_referenced_columns_exist_on_the_target(generated: Dict[str, Any]) -> None:

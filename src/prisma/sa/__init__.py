@@ -26,6 +26,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
+# Not lazy, unlike the two below: `_values` is pure stdlib and does not import
+# SQLAlchemy, so there is nothing to defer. It is the write half of the package
+# — the client-side values Prisma fills in and a bare INSERT does not.
+from ._values import values_for_create, values_for_update
 from .._schema import get_schema, get_provider, get_enum_schema
 
 if TYPE_CHECKING:
@@ -50,6 +54,8 @@ __all__ = (
     'table_for',
     'join_table_for',
     'build_metadata',
+    'values_for_create',
+    'values_for_update',
     'clear_cache',
     'UnsupportedProviderError',
 )

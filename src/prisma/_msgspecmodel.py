@@ -92,12 +92,15 @@ def envelope_decoder(model: type) -> Any:
     """
     decoder = _ENVELOPE_DECODERS.get(model)
     if decoder is None:
-        result_t = Optional[Union[List[model], model]]  # type: ignore[valid-type]
+        result_t: Any = Optional[Union[List[model], model]]  # type: ignore[valid-type]
         result_struct = msgspec.defstruct(f'{model.__name__}Result', [('result', result_t, None)])
-        envelope = msgspec.defstruct(
-            f'{model.__name__}Envelope',
-            [('data', Optional[result_struct], None), ('errors', Optional[List[Any]], None)],
-        )
+        # annotated `Any` because these are runtime-built type objects, which
+        # mypy sees as special forms rather than the `type` `defstruct` wants
+        envelope_fields: List[Any] = [
+            ('data', Optional[result_struct], None),
+            ('errors', Optional[List[Any]], None),
+        ]
+        envelope = msgspec.defstruct(f'{model.__name__}Envelope', envelope_fields)
         decoder = msgspec.json.Decoder(envelope, dec_hook=_dec_hook, strict=False)
         _ENVELOPE_DECODERS[model] = decoder
     return decoder
@@ -198,7 +201,9 @@ def _pydantic_twin(cls: type) -> Any:
             if tag == 'opt':
                 return Optional[spec_type(inner)]
             if tag == 'list':
-                return List[spec_type(inner)]
+                # the element type is only known at runtime, so `List[...]` is
+                # being subscripted with a value rather than a type expression
+                return List[spec_type(inner)]  # type: ignore[misc]
             return Any  # ('model', ...) relations carry nested twins
 
         fields: Dict[str, Any] = {

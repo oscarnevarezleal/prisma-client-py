@@ -30,6 +30,10 @@ from sqlalchemy.dialects import postgresql
 
 from prisma.generator.models import MAX_IDENTIFIER_LENGTH, truncate_identifier
 
+# SQLAlchemy leaves `PGDialect_psycopg2.__init__` unannotated, so constructing
+# the dialect is an untyped call as far as mypy is concerned.
+DIALECT: sa.engine.Dialect = postgresql.dialect()  # type: ignore[no-untyped-call]
+
 # -- B2: `uuid()` arrives as `uuid(4)` ----------------------------------------
 
 
@@ -68,9 +72,13 @@ def test_b5_non_pk_autoincrement_keeps_its_sequence(metadata: sa.MetaData) -> No
     own gate.
     """
     column = metadata.tables['Ticket'].c['ticketNumber']
-    assert column.server_default is not None, 'no DEFAULT — every INSERT would fail'
-    assert 'nextval' in str(column.server_default.arg)
-    assert 'Ticket_ticketNumber_seq' in str(column.server_default.arg)
+    default = column.server_default
+    assert default is not None, 'no DEFAULT — every INSERT would fail'
+    # `Column.server_default` is typed as the `FetchedValue` base, which has no
+    # `.arg`; only the `DefaultClause` subclass carries the DDL expression.
+    assert isinstance(default, sa.DefaultClause)
+    assert 'nextval' in str(default.arg)
+    assert 'Ticket_ticketNumber_seq' in str(default.arg)
 
 
 def test_b5_sequence_is_created_with_the_schema(metadata: sa.MetaData) -> None:
@@ -85,7 +93,9 @@ def test_b5_sequence_is_sized_to_the_column(metadata: sa.MetaData) -> None:
     SQLAlchemy defaults to bigint, so omitting this makes every `Int` sequence
     a bigint one — a diff on every such column.
     """
-    sequences = {seq.name: seq for seq in metadata._sequences.values()}
+    # `_sequences` is keyed by `quoted_name`, so re-key by plain `str` to look
+    # sequences up by the literal names below.
+    sequences: Dict[str, sa.Sequence] = {str(seq.name): seq for seq in metadata._sequences.values()}
     assert isinstance(sequences['Ticket_ticketNumber_seq'].data_type, sa.Integer)
     assert isinstance(sequences['Ticket_bigNumber_seq'].data_type, sa.BigInteger)
 
@@ -102,6 +112,9 @@ def test_b5_primary_key_autoincrement_still_uses_serial(metadata: sa.MetaData) -
 def server_default(metadata: sa.MetaData, table: str, column: str) -> str:
     default = metadata.tables[table].c[column].server_default
     assert default is not None
+    # `.arg` only exists on `DefaultClause`, not on the `FetchedValue` base
+    # that `Column.server_default` is declared as.
+    assert isinstance(default, sa.DefaultClause)
     return str(default.arg)
 
 
@@ -194,7 +207,7 @@ def test_b1_native_types_are_honoured(metadata: sa.MetaData, column: str, render
     full-database rewrite with index and FK rebuilds on every table.
     """
     type_ = metadata.tables['Ticket'].c[column].type
-    assert str(type_.compile(dialect=postgresql.dialect())) == rendered
+    assert str(type_.compile(dialect=DIALECT)) == rendered
 
 
 def test_b1_foreign_key_column_matches_the_key_it_references(metadata: sa.MetaData) -> None:
@@ -244,14 +257,14 @@ def test_b6_descending_index_column_keeps_its_direction(metadata: sa.MetaData) -
     sort node. Silent to the application, visible later as a slow query.
     """
     index = next(i for i in metadata.tables['geofences'].indexes if i.name == 'idx_geofence_scope_created')
-    rendered = str(CreateIndex(index).compile(dialect=postgresql.dialect()))
+    rendered = str(CreateIndex(index).compile(dialect=DIALECT))
     assert 'created_at DESC' in rendered
     assert 'scope_id, created_at DESC' in rendered
 
 
 def test_b6_ascending_columns_are_left_alone(metadata: sa.MetaData) -> None:
     index = next(i for i in metadata.tables['accounts'].indexes if i.name == 'account_email_created_idx')
-    assert 'DESC' not in str(CreateIndex(index).compile(dialect=postgresql.dialect()))
+    assert 'DESC' not in str(CreateIndex(index).compile(dialect=DIALECT))
 
 
 # -- B7: `@relation(map:)` ignored --------------------------------------------

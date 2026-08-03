@@ -16,7 +16,7 @@ mysterious schema diff.
 from __future__ import annotations
 
 import json
-from typing import Any, Set, Dict, List
+from typing import Any, Set, Dict, List, cast
 from pathlib import Path
 
 import pytest
@@ -56,7 +56,7 @@ def wire_keys(objects: List[Dict[str, Any]]) -> Set[str]:
 def wire_fixture() -> Dict[str, Any]:
     if not FIXTURE.exists():
         pytest.skip(f'wire sample not recorded at {FIXTURE}')
-    return json.loads(FIXTURE.read_text())
+    return cast('Dict[str, Any]', json.loads(FIXTURE.read_text()))
 
 
 def test_datamodel_covers_wire(wire: Dict[str, Any]) -> None:

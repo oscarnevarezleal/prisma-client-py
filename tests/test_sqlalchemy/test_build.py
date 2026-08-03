@@ -17,6 +17,10 @@ from sqlalchemy.dialects import postgresql
 from prisma.sa import build_metadata
 from prisma.sa._types import UnsupportedProviderError
 
+# SQLAlchemy leaves `PGDialect_psycopg2.__init__` unannotated, so constructing
+# the dialect is an untyped call as far as mypy is concerned.
+DIALECT: sa.engine.Dialect = postgresql.dialect()  # type: ignore[no-untyped-call]
+
 
 def table(metadata: sa.MetaData, name: str) -> sa.Table:
     return metadata.tables[name]
@@ -61,7 +65,7 @@ def test_relation_fields_are_not_columns(metadata: sa.MetaData) -> None:
 )
 def test_scalar_types(metadata: sa.MetaData, column: str, rendered: str) -> None:
     type_ = table(metadata, 'accounts').c[column].type
-    assert str(type_.compile(dialect=postgresql.dialect())) == rendered
+    assert str(type_.compile(dialect=DIALECT)) == rendered
 
 
 def test_enum_column_uses_database_labels(metadata: sa.MetaData) -> None:
@@ -92,7 +96,12 @@ def test_optional_scalars_are_nullable(metadata: sa.MetaData) -> None:
 
 def server_default(metadata: sa.MetaData, table_name: str, column: str) -> Any:
     default = table(metadata, table_name).c[column].server_default
-    return None if default is None else str(default.arg)
+    if default is None:
+        return None
+    # `.arg` only exists on `DefaultClause`, not on the `FetchedValue` base
+    # that `Column.server_default` is declared as.
+    assert isinstance(default, sa.DefaultClause)
+    return str(default.arg)
 
 
 def test_client_side_generators_have_no_server_default(metadata: sa.MetaData) -> None:

@@ -30,11 +30,14 @@ import json
 import decimal
 import datetime
 from enum import Enum
-from typing import Any, Dict, List, Type, Union, Callable, Optional, get_args, get_origin
+from typing import Any, Dict, List, Type, Tuple, Union, Callable, Optional, get_args, get_origin
 
 Converter = Callable[[Any], Any]
 
-_PLANS: Dict[type, List[tuple]] = {}
+#: field name -> converter, or None where the engine value is passed through.
+FieldPlan = List[Tuple[str, Optional[Converter]]]
+
+_PLANS: Dict[type, FieldPlan] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -100,10 +103,10 @@ def converter_for_annotation(annotation: Any) -> Optional[Converter]:
         return lambda v: None if v is None else inner(v)
 
     if origin in (list, List):
-        inner = converter_for_annotation(get_args(annotation)[0])
-        if inner is None:
+        item_conv = converter_for_annotation(get_args(annotation)[0])
+        if item_conv is None:
             return None
-        return lambda v: v if v is None else [inner(item) for item in v]
+        return lambda v: v if v is None else [item_conv(item) for item in v]
 
     if annotation is datetime.datetime:
         return _to_datetime
@@ -135,7 +138,7 @@ def converter_for_annotation(annotation: Any) -> Optional[Converter]:
     return None
 
 
-def _plan_for(model: type) -> List[tuple]:
+def _plan_for(model: type) -> FieldPlan:
     plan = _PLANS.get(model)
     if plan is None:
         plan = []
@@ -207,7 +210,9 @@ def converter_for_spec(spec: Any, resolve_model: Callable[[str], type]) -> Optio
             if value is None:
                 return None
             cls = resolve_model(_name)
-            return cls.from_engine(value)
+            # `from_engine` is emitted onto the generated model classes, which
+            # cannot be named here — the resolver is only known to return a class.
+            return cls.from_engine(value)  # type: ignore[attr-defined]
 
         return _convert
 

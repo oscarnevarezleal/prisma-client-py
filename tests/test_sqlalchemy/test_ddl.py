@@ -21,7 +21,9 @@ import sqlalchemy as sa
 from sqlalchemy.schema import CreateIndex, CreateTable
 from sqlalchemy.dialects import postgresql
 
-DIALECT = postgresql.dialect()
+# SQLAlchemy leaves `PGDialect_psycopg2.__init__` unannotated, so constructing
+# the dialect is an untyped call as far as mypy is concerned.
+DIALECT: sa.engine.Dialect = postgresql.dialect()  # type: ignore[no-untyped-call]
 
 
 def _normalize(ddl: str) -> str:

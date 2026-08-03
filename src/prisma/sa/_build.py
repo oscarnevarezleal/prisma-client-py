@@ -228,7 +228,11 @@ def _own_sequences(table: sa.Table, spec: Mapping[str, Any]) -> None:
         event.listen(
             table,
             'after_create',
-            sa.DDL(f'ALTER SEQUENCE "{sequence}" OWNED BY "{table.name}"."{field["column"]}"'),
+            # SQLAlchemy leaves `DDL.__init__` unannotated, so mypy sees an
+            # untyped call here.
+            sa.DDL(  # type: ignore[no-untyped-call]
+                f'ALTER SEQUENCE "{sequence}" OWNED BY "{table.name}"."{field["column"]}"'
+            ),
         )
 
 

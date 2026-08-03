@@ -19,7 +19,7 @@ kept: it is the only source of `@db.*` native types.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Iterator
+from typing import Any, Dict, List, Iterator, cast
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -51,7 +51,7 @@ class _FakeData:
 
 
 def read_wire_sample() -> Dict[str, Any]:
-    return json.loads(SAMPLE.read_text())
+    return cast('Dict[str, Any]', json.loads(SAMPLE.read_text()))
 
 
 def schema_text() -> str:
@@ -72,7 +72,9 @@ def loaded_datamodel() -> Iterator[Datamodel]:
 
     datamodel = Datamodel.model_validate(read_wire_sample()['dmmf']['datamodel'])
 
-    token = data_ctx.set(_FakeData(datamodel))  # pyright: ignore[reportArgumentType]
+    # `_FakeData` is deliberately only the slice of `GenericData` the derivation
+    # reads (see its docstring), so it cannot satisfy the context var's type.
+    token = data_ctx.set(cast(Any, _FakeData(datamodel)))
     try:
         yield datamodel
     finally:

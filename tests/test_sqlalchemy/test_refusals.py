@@ -16,9 +16,22 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import pytest
+import sqlalchemy as sa
 
 from prisma.sa import build_metadata
 from prisma.sa._types import SUPPORTED_PROVIDERS, UnsupportedProviderError
+
+
+def server_default(metadata: sa.MetaData, table: str, column: str) -> str:
+    """The DDL default expression for a column.
+
+    `Column.server_default` is declared as the `FetchedValue` base, which has
+    no `.arg`; only the `DefaultClause` subclass carries the expression.
+    """
+    default = metadata.tables[table].c[column].server_default
+    assert default is not None
+    assert isinstance(default, sa.DefaultClause)
+    return str(default.arg)
 
 
 def field(**overrides: Any) -> Dict[str, Any]:
@@ -115,7 +128,7 @@ def test_dbgenerated_passes_the_expression_through() -> None:
         {},
         'postgresql',
     )
-    assert str(built.tables['Thing'].c['id'].server_default.arg) == 'gen_random_uuid()'
+    assert server_default(built, 'Thing', 'id') == 'gen_random_uuid()'
 
 
 def test_dbgenerated_without_an_argument_emits_nothing() -> None:
@@ -137,7 +150,7 @@ def test_string_literal_defaults_are_quoted() -> None:
         'postgresql',
     )
     # the apostrophe must be escaped or the DDL is a syntax error
-    assert str(built.tables['Thing'].c['name'].server_default.arg) == "'O''Brien'"
+    assert server_default(built, 'Thing', 'name') == "'O''Brien'"
 
 
 @pytest.mark.parametrize(('value', 'expected'), [(True, 'true'), (False, 'false')])
@@ -148,7 +161,7 @@ def test_boolean_literal_defaults(value: bool, expected: str) -> None:
         {},
         'postgresql',
     )
-    assert str(built.tables['Thing'].c['flag'].server_default.arg) == expected
+    assert server_default(built, 'Thing', 'flag') == expected
 
 
 # -- referential actions ------------------------------------------------------
@@ -306,7 +319,10 @@ def test_every_native_type_constructs(annotation: str, args: List[str], rendered
     from prisma.sa._types import native_type
 
     type_ = native_type('postgresql', annotation, args)
-    assert str(type_.compile(dialect=postgresql.dialect())) == rendered
+    # SQLAlchemy leaves `PGDialect_psycopg2.__init__` unannotated, so
+    # constructing the dialect is an untyped call as far as mypy is concerned.
+    dialect = postgresql.dialect()  # type: ignore[no-untyped-call]
+    assert str(type_.compile(dialect=dialect)) == rendered
 
 
 def test_every_mapped_native_type_is_constructed_somewhere() -> None:

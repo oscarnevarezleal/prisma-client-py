@@ -25,14 +25,14 @@ from __future__ import annotations
 
 import json as _json
 import importlib
-from typing import Any, Dict, List, Tuple, ClassVar, Optional
+from typing import Any, Dict, List, Tuple, Callable, ClassVar, Optional
 
 from ._fastparse import Converter, converter_for_spec
 
 _PLANS: Dict[type, List[Tuple[str, Optional[Converter]]]] = {}
 
 
-def _resolver_for(cls: type) -> Any:
+def _resolver_for(cls: type) -> Callable[[str], type]:
     """Resolve related model names.
 
     Single-module layouts (msgspec backend) find siblings in the class's own

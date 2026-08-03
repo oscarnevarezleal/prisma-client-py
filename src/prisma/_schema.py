@@ -36,7 +36,7 @@ in arity, but they differ in every generated query, so they are named apart.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, cast
 from importlib import import_module
 from typing_extensions import Literal, TypedDict
 
@@ -250,7 +250,7 @@ def get_schema() -> Mapping[str, ModelSchema]:
     schema = getattr(_metadata(), 'SCHEMA', None)
     if schema is None:
         raise SchemaNotAvailableError()
-    return schema  # pyright: ignore[reportReturnType]
+    return cast('Mapping[str, ModelSchema]', schema)
 
 
 def get_enum_schema() -> Mapping[str, EnumSchema]:
@@ -258,7 +258,7 @@ def get_enum_schema() -> Mapping[str, EnumSchema]:
     schema = getattr(_metadata(), 'ENUM_SCHEMA', None)
     if schema is None:
         raise SchemaNotAvailableError()
-    return schema  # pyright: ignore[reportReturnType]
+    return cast('Mapping[str, EnumSchema]', schema)
 
 
 def get_provider() -> str:
@@ -266,7 +266,7 @@ def get_provider() -> str:
     provider = getattr(_metadata(), 'DATABASE_PROVIDER', None)
     if provider is None:
         raise SchemaNotAvailableError()
-    return provider  # pyright: ignore[reportReturnType]
+    return cast(str, provider)
 
 
 def model_schema(model: str) -> ModelSchema:
