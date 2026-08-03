@@ -32,10 +32,11 @@ from __future__ import annotations
 
 import decimal
 import datetime
-from typing import Any, Dict, List, Mapping, Callable, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Callable, Sequence
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy import exc as sa_exc
 from sqlalchemy.dialects import postgresql
 
 from prisma.sa import values_for_create, values_for_update
@@ -182,11 +183,14 @@ def fingerprint(row: Mapping[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def read(engine: 'sa.Engine', table: 'sa.Table', where: Any) -> Optional[Dict[str, Any]]:
+def read(engine: 'sa.Engine', table: 'sa.Table', where: Any) -> Dict[str, Any]:
+    """The one row matching `where`.
+
+    `.one()` rather than `.first()`: every call here reads back a row the test
+    just wrote, so "there is no such row" is a failure and not a result.
+    """
     with engine.connect() as conn:
-        row = conn.execute(sa.select(table).where(where)).mappings().first()
-    if row is None:  # pragma: no cover - a helper guard; every caller reads a row it wrote
-        return None
+        row = conn.execute(sa.select(table).where(where)).mappings().one()
     return dict(row)
 
 
@@ -337,7 +341,6 @@ def test_upsert_with_no_matching_row_lands_the_row_create_would_have(
 
     theirs = read(write_engine, accounts, accounts.c.email == 'theirs@example.com')
     ours = read(write_engine, accounts, accounts.c.email == 'ours@example.com')
-    assert theirs is not None and ours is not None
     assert fingerprint(ours) == fingerprint(theirs)
     assert ours['balance'] == decimal.Decimal('1.50'), 'the update payload is not applied on this branch'
     assert ours['createdAt'] == ours['updatedAt'], 'as on a fresh create'
@@ -364,7 +367,6 @@ def test_upsert_create_branch_returns_the_row_it_wrote(
     )
 
     stored = read(write_engine, accounts, accounts.c.email == 'theirs@example.com')
-    assert stored is not None
     assert returned == read(write_engine, accounts, accounts.c.email == 'ours@example.com')
     assert fingerprint(returned) == fingerprint(stored)
     # what Prisma handed back is the same row it wrote, modulo the object types
@@ -407,7 +409,6 @@ def test_upsert_with_a_matching_row_updates_it_in_place(
 
     left = read(write_engine, accounts, accounts.c.email == 'theirs@example.com')
     right = read(write_engine, accounts, accounts.c.email == 'ours@example.com')
-    assert left is not None and right is not None
     assert fingerprint(left) == fingerprint(right)
     assert right['id'] == ours.id, 'the same row, not a replacement'
     assert right['createdAt'] == naive(ours.createdAt)
@@ -444,7 +445,6 @@ def test_upsert_update_branch_ignores_the_create_payload(
 
     left = read(write_engine, accounts, accounts.c.email == 'theirs@example.com')
     right = read(write_engine, accounts, accounts.c.email == 'ours@example.com')
-    assert left is not None and right is not None
     assert left['role'] == right['role'] == 'OWNER', 'the create payload is not applied on this branch'
     assert fingerprint(left) == fingerprint(right)
 
@@ -536,7 +536,6 @@ def test_upsert_by_a_compound_unique(
 
     left = read(write_engine, accounts, accounts.c.email == 'theirs@example.com')
     right = read(write_engine, accounts, accounts.c.email == 'ours@example.com')
-    assert left is not None and right is not None
     assert left['balance'] == right['balance'] == decimal.Decimal('4.00')
     assert fingerprint(left) == fingerprint(right)
     assert len(rows(write_engine, accounts)) == 2, 'two upserts each, two rows'
@@ -646,7 +645,6 @@ def test_upsert_survives_a_concurrent_insert_of_the_same_key(
 
     left = read(write_engine, accounts, accounts.c.email == 'theirs@example.com')
     right = read(write_engine, accounts, accounts.c.email == 'ours@example.com')
-    assert left is not None and right is not None
     assert left['balance'] == right['balance'] == decimal.Decimal('5.00')
     assert len(rows(write_engine, accounts)) == 2
 
@@ -667,7 +665,7 @@ def test_a_read_then_write_translation_does_not_survive_a_concurrent_insert(
         data={'create': account_data('theirs@example.com', 'theirs'), 'update': {'balance': decimal.Decimal('5.00')}},
     )
 
-    with pytest.raises(sa.exc.IntegrityError) as caught:
+    with pytest.raises(sa_exc.IntegrityError) as caught:
         read_then_write(
             write_engine,
             accounts,
@@ -679,7 +677,9 @@ def test_a_read_then_write_translation_does_not_survive_a_concurrent_insert(
         )
 
     assert getattr(caught.value.orig, 'sqlstate', None) == '23505'
-    assert read(write_engine, accounts, accounts.c.email == 'theirs@example.com') is not None
+    assert read(write_engine, accounts, accounts.c.email == 'theirs@example.com')['balance'] == decimal.Decimal(
+        '5.00'
+    ), 'Prisma took the update branch under the same interleaving'
 
 
 def test_the_read_then_write_translation_is_right_only_when_nothing_races_it(
@@ -721,7 +721,6 @@ def test_the_read_then_write_translation_is_right_only_when_nothing_races_it(
     )
 
     theirs = read(write_engine, accounts, accounts.c.email == 'theirs@example.com')
-    assert theirs is not None
     assert created['id'] == updated['id'], 'the second pass took the update branch'
     assert updated['balance'] == decimal.Decimal('5.00')
     assert fingerprint(updated) == fingerprint(theirs)
@@ -793,7 +792,7 @@ def test_a_conflict_on_a_different_unique_is_not_caught_by_the_conflict_target(
             },
         )
 
-    with pytest.raises(sa.exc.IntegrityError) as caught:
+    with pytest.raises(sa_exc.IntegrityError) as caught:
         upsert(
             write_engine,
             accounts,
@@ -828,7 +827,6 @@ def test_an_empty_update_payload_is_a_different_operation(
     )
 
     after = read(write_engine, accounts, accounts.c.email == 'theirs@example.com')
-    assert after is not None
     assert after['updatedAt'] == naive(theirs.updatedAt), 'Prisma left the row alone entirely'
 
     assert values_for_update('Account', {}) != {}, 'ours would stamp @updatedAt'

@@ -100,7 +100,7 @@ def writing_transactions(engine: 'sa.Engine') -> int:
 
 def count_here(conn: 'sa.Connection') -> int:
     """Rows visible on *this* connection, committed or not."""
-    return conn.execute(sqlalchemy.text('SELECT count(*) FROM accounts')).scalar_one()
+    return int(conn.execute(sqlalchemy.text('SELECT count(*) FROM accounts')).scalar_one())
 
 
 def sqlstate(exc: BaseException) -> str:
@@ -559,7 +559,9 @@ def test_max_wait_and_pool_timeout_both_refuse_rather_than_block(
     managers: List[Any] = []
     try:
         with pytest.raises(errors.PrismaError):
-            for _ in range(40):
+            # the bound is a backstop; the loop is meant to be cut short by the
+            # pool refusing, and `pytest.raises` fails the test if it is not
+            for _ in range(40):  # pragma: no branch
                 manager = prisma_client.tx(
                     max_wait=datetime.timedelta(milliseconds=200),
                     timeout=datetime.timedelta(milliseconds=20000),
@@ -576,7 +578,7 @@ def test_max_wait_and_pool_timeout_both_refuse_rather_than_block(
     held: List[Any] = []
     try:
         with pytest.raises(sqlalchemy.exc.TimeoutError):
-            for _ in range(40):
+            for _ in range(40):  # pragma: no branch
                 conn = small.connect()
                 conn.begin()
                 held.append(conn)
@@ -698,9 +700,7 @@ def test_a_batch_mixes_write_methods_inside_the_one_transaction(
                 [values_for_create('Account', account_data(slug), moment=moment) for slug in ('two', 'three')]
             )
         )
-        conn.execute(
-            sqlalchemy.update(accounts).where(accounts.c.url_slug == 'one').values(balance=decimal.Decimal(9))
-        )
+        conn.execute(sqlalchemy.update(accounts).where(accounts.c.url_slug == 'one').values(balance=decimal.Decimal(9)))
         conn.execute(sqlalchemy.delete(accounts).where(accounts.c.url_slug == 'three'))
 
     assert slugs_committed(write_engine) == theirs
