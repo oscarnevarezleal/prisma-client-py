@@ -674,7 +674,7 @@ def test_a_read_then_write_translation_does_not_survive_a_concurrent_insert(
         data={'create': account_data('theirs@example.com', 'theirs'), 'update': {'balance': decimal.Decimal('5.00')}},
     )
     theirs = read(write_engine, accounts, accounts.c.email == 'theirs@example.com')
-    assert theirs['balance'] == decimal.Decimal('5.00'), 'Prisma updated the other writer’s row'
+    assert theirs['balance'] == decimal.Decimal('5.00'), 'Prisma updated the row the other writer landed'
 
     with pytest.raises(sa_exc.IntegrityError) as caught:
         read_then_write(
@@ -689,7 +689,9 @@ def test_a_read_then_write_translation_does_not_survive_a_concurrent_insert(
 
     assert getattr(caught.value.orig, 'sqlstate', None) == '23505'
     ours = read(write_engine, accounts, accounts.c.email == 'ours@example.com')
-    assert ours['balance'] == decimal.Decimal('1.50'), 'the interloper’s row, and our write never landed at all'
+    assert ours['balance'] == decimal.Decimal(
+        '1.50'
+    ), 'the row the other writer landed, untouched: our write never happened'
 
 
 def test_the_read_then_write_translation_is_right_only_when_nothing_races_it(

@@ -25,8 +25,10 @@ never have found.
 
 Scope: flat `create`/`update` payloads, scalars and enums. Nested writes,
 `connect`/`disconnect`, `include=` and atomic operations stay on the runbook's
-STOP list; the two of those Prisma happens to accept here (`include=` and
-`{'increment': 1}`) are not attempted, because `values_for_*` refuses them.
+STOP list. Two of those — a nested `create` and `{'increment': 1}` — are run
+anyway, as pinned *mismatches*: Prisma performs them and `values_for_*` refuses
+them by name, which is the divergence that keeps them on the list. `include=` is
+not attempted at all.
 
     BENCH_DATABASE_URL=postgresql://... python verify_upsert.py --workdir /tmp/pglab-sa
 
