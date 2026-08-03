@@ -287,16 +287,14 @@ def build_cases(  # noqa: PLR0915 - a flat list of cases; splitting it hides the
             'mismatch',
         ),
         (
-            'create, an explicit NAIVE UTC datetime lands Prisma\'s value under any session',
+            "create, an explicit NAIVE UTC datetime lands Prisma's value under any session",
             lambda: _published(conn, db.post.create(data=creation(prisma_site, 'tzn', publishedAt=AWARE)), post),
             lambda: _timezone(
                 conn,
                 'America/New_York',
                 lambda: (
                     conn.execute(
-                        sa.insert(post).values(
-                            **values_for_create('Post', creation(sa_site, 'tzn', publishedAt=NAIVE))
-                        )
+                        sa.insert(post).values(**values_for_create('Post', creation(sa_site, 'tzn', publishedAt=NAIVE)))
                     ),
                     conn.commit(),
                     read(sa_site, 'tzn'),
@@ -339,9 +337,7 @@ def build_cases(  # noqa: PLR0915 - a flat list of cases; splitting it hides the
             lambda: (
                 seed(sa_site, 'dup'),
                 classify(
-                    lambda: conn.execute(
-                        sa.insert(post).values(**values_for_create('Post', creation(sa_site, 'dup')))
-                    ),
+                    lambda: conn.execute(sa.insert(post).values(**values_for_create('Post', creation(sa_site, 'dup')))),
                     conn,
                 ),
                 conn.execute(sa.select(sa.func.count()).select_from(post).where(post.c.siteId == sa_site)).scalar_one(),
@@ -402,9 +398,7 @@ def build_cases(  # noqa: PLR0915 - a flat list of cases; splitting it hides the
                         sa.and_(
                             *(
                                 post.c[column] == value
-                                for column, value in zip(
-                                    unique_columns('Post', 'siteId_slug'), (sa_site, 'compound')
-                                )
+                                for column, value in zip(unique_columns('Post', 'siteId_slug'), (sa_site, 'compound'))
                             )
                         )
                     )
@@ -418,7 +412,9 @@ def build_cases(  # noqa: PLR0915 - a flat list of cases; splitting it hides the
             'update moves updatedAt and leaves createdAt alone',
             lambda: _moved(
                 seed(prisma_site, 'stamps'),
-                lambda: db.post.update(where={'siteId_slug': {'siteId': prisma_site, 'slug': 'stamps'}}, data={'title': 'moved'}),
+                lambda: db.post.update(
+                    where={'siteId_slug': {'siteId': prisma_site, 'slug': 'stamps'}}, data={'title': 'moved'}
+                ),
                 lambda: read(prisma_site, 'stamps'),
             ),
             lambda: _moved(
@@ -567,7 +563,7 @@ def build_cases(  # noqa: PLR0915 - a flat list of cases; splitting it hides the
         # question of who performs the cascade, and the answer is the foreign
         # key, identically for both callers.
         (
-            'delete with children, cascade is the database\'s and both agree',
+            "delete with children, cascade is the database's and both agree",
             lambda: _cascade(
                 conn,
                 comment,
@@ -603,7 +599,9 @@ def _timezone(conn: sa.Connection, zone: str, call: Callable[[], Any]) -> Any:
     try:
         return call()
     finally:
-        conn.execute(sa.text('SET TIME ZONE UTC'))
+        # `SET TIME ZONE` outlives the transaction, so every case after this one
+        # would inherit the zone if it were not put back.
+        conn.execute(sa.text('RESET TimeZone'))
         conn.commit()
 
 
@@ -730,10 +728,10 @@ def setup(db: Any, conn: sa.Connection) -> Tuple[str, str, str]:
 
 def teardown(conn: sa.Connection) -> None:
     for statement in (
-        f"DELETE FROM \"Post\" WHERE \"siteId\" LIKE '{PREFIX}%'",
-        f"DELETE FROM \"Site\" WHERE id LIKE '{PREFIX}%'",
-        f"DELETE FROM \"User\" WHERE id LIKE '{PREFIX}%'",
-        f"DELETE FROM \"Organization\" WHERE id LIKE '{PREFIX}%'",
+        f'DELETE FROM "Post" WHERE "siteId" LIKE \'{PREFIX}%\'',
+        f'DELETE FROM "Site" WHERE id LIKE \'{PREFIX}%\'',
+        f'DELETE FROM "User" WHERE id LIKE \'{PREFIX}%\'',
+        f'DELETE FROM "Organization" WHERE id LIKE \'{PREFIX}%\'',
     ):
         conn.execute(sa.text(statement))
     conn.commit()

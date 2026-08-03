@@ -7,10 +7,11 @@ means hand back to a human with the specific reason, not guess.
 
 Every translation below was executed against a live PostgreSQL database with
 both Prisma and SQLAlchemy and the results compared row for row. The harnesses
-are `benchmarks/pg-lab/verify_translations.py` for reads and
-`benchmarks/pg-lab/verify_writes.py` for writes, and they are the source of
-truth for this file. A translation not in the table has not been verified and
-must not be emitted.
+are `benchmarks/pg-lab/verify_translations.py` for reads,
+`benchmarks/pg-lab/verify_writes.py` for single-row writes and
+`benchmarks/pg-lab/verify_bulk_writes.py` for the `*_many` family, and they are
+the source of truth for this file. A translation not in the table has not been
+verified and must not be emitted.
 
 ---
 
