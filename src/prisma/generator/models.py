@@ -299,7 +299,9 @@ def build_schema_metadata(datamodel: 'Datamodel', schema_text: Optional[str] = N
                     # Prisma's default. Resolving it here means a schema differ
                     # compares real names instead of reporting every index as
                     # both dropped and added.
-                    'name': index.db_name or index.name or truncate_identifier('_'.join([model.table_name, *columns]), '_idx'),
+                    'name': index.db_name
+                    or index.name
+                    or truncate_identifier('_'.join([model.table_name, *columns]), '_idx'),
                     'is_named': index.db_name is not None or index.name is not None,
                     'type': index.type,
                     'algorithm': index.algorithm,
