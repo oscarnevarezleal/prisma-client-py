@@ -75,6 +75,13 @@ CANDIDATES_PHASE2: list[dict[str, object]] = [
         'options': {'modelBackend': '"slim"'},
         'why': 'pydantic-free __slots__ records; no core-schema compilation at all',
     },
+    {
+        'name': 'msgspec-models',
+        # msgspec resolves cyclic relation refs against one module, so this
+        # candidate also turns separateModelFiles back off
+        'options': {'modelBackend': '"msgspec"', 'separateModelFiles': 'false'},
+        'why': 'C-decoded msgspec structs; 5-9x faster deserialization in microbenchmarks',
+    },
 ]
 
 # The ladder. Options accumulate: each candidate is (name, extra options, unified?)

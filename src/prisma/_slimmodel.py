@@ -33,10 +33,20 @@ _PLANS: Dict[type, List[Tuple[str, Optional[Converter]]]] = {}
 
 
 def _resolver_for(cls: type) -> Any:
-    """Resolve sibling model names through the (lazy) generated models package."""
-    package = cls.__module__.rsplit('.', 1)[0]
+    """Resolve related model names.
+
+    Single-module layouts (msgspec backend) find siblings in the class's own
+    module; per-model layouts (slim backend) go through the lazy models
+    package one level up.
+    """
+    own_module = cls.__module__
+    package = own_module.rsplit('.', 1)[0]
 
     def resolve(name: str) -> type:
+        mod = importlib.import_module(own_module)
+        found = getattr(mod, name, None)
+        if found is not None:
+            return found  # type: ignore[no-any-return]
         return getattr(importlib.import_module(package), name)  # type: ignore[no-any-return]
 
     return resolve

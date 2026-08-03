@@ -140,6 +140,44 @@ What the loop taught us (the rejections are the valuable part):
   async clients are connected at the same time, this flag is worth ~24 MB per
   process regardless of what the composite says.
 
+## Model-backend head-to-head (`head2head.py`)
+
+The ladder measures each candidate once against a moving baseline — right for
+exploration, noise-sensitive for close calls (a contended run of the ladder
+mis-ranked backends whose true gap is a few percent). `head2head.py` settles
+those: it generates each end-state config once, then interleaves measurement
+passes (A,B,C,A,B,C,...) so machine drift lands on every variant equally.
+
+7 passes x 30 rounds, all on `recursive_type_depth=-1` + `minimalRuntime` +
+unified package + `lazyActions` (raw data `results-h2h-2026-08-03.json`):
+
+| backend | RSS (MB) | import (ms) | queries (ms) | composite |
+| --- | ---: | ---: | ---: | ---: |
+| `pydantic` (default) | 66.9 | 366 | 29.85 | 100.84 |
+| `slim` | **58.4** | **347** | 27.49 | 94.37 |
+| `msgspec` | 59.3 | 353 | **26.29** | **94.07** |
+
+Takeaways:
+
+- **`msgspec` is the recommended alternative backend**: best composite, the
+  lowest query latency of anything measured (−12% vs pydantic), RSS within
+  1 MB of slim — and its speed comes from a maintained C library instead of
+  slim's bespoke exec-compiled deserializers. In microbenchmarks msgspec
+  converts 5-9x faster than pydantic-core; end-to-end that compresses to
+  ~1-3.5 ms/query because the engine round-trip dominates — which is also the
+  pointer to the next structural win: `msgspec.json.Decoder.decode(raw_bytes)`
+  in the engine HTTP layer would skip the `response.json()` dict stage
+  entirely (bytes -> typed structs in one C pass, 32 us vs ~210 us for this
+  payload shape).
+- msgspec structs resolve cyclic relation references against one module, so
+  `modelBackend = "msgspec"` generates a single `models.py` and is
+  incompatible with `separateModelFiles`. That trade is cheap: structs
+  compile no per-model schemas, so the single module imports flat.
+- Pydantic retro-compat is per-record: `model_dump()` / `dict()` /
+  `model_dump_json()` / keyword construction / `Model.prisma()` work on
+  structs directly, and `to_pydantic()` returns a real `pydantic.BaseModel`
+  (lazily created, cached twin class) for integrations that demand one.
+
 ## Notes
 
 - Python RSS only; the Rust query engines are separate processes (~22 MB each,

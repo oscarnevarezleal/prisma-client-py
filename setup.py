@@ -29,6 +29,8 @@ if not version:
 
 extras = {
     'node': requirements('node.txt'),
+    # for the opt-in `modelBackend = "msgspec"` generator option
+    'msgspec': requirements('msgspec.txt'),
 }
 
 setup(

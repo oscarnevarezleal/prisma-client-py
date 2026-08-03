@@ -604,10 +604,11 @@ class Config(BaseSettings):
         alias='modelBackend',
         description=(
             'Record model backend. "pydantic" (default) generates the usual pydantic '
-            'BaseModel records. "slim" generates pydantic-free __slots__ records '
-            'deserialized by compiled converters — much lighter, but they only convert '
-            'trusted engine data rather than validating arbitrary input. Experimental; '
-            'requires separateModelFiles.'
+            'BaseModel records. "slim" generates pydantic-free __slots__ records with '
+            'compiled converters (requires separateModelFiles). "msgspec" generates '
+            'msgspec.Struct records decoded in C — the fastest backend (requires the '
+            'msgspec package, incompatible with separateModelFiles). Both alternatives '
+            'convert trusted engine data rather than validating arbitrary input.'
         ),
     )
 
@@ -722,8 +723,8 @@ class Config(BaseSettings):
             values.pop('modelBackend', None)
 
         backend = values.get('model_backend')
-        if backend is not None and backend not in ('pydantic', 'slim'):
-            raise ValueError(f'modelBackend must be "pydantic" or "slim", got: {backend!r}')
+        if backend is not None and backend not in ('pydantic', 'slim', 'msgspec'):
+            raise ValueError(f'modelBackend must be "pydantic", "slim" or "msgspec", got: {backend!r}')
 
         return values
 

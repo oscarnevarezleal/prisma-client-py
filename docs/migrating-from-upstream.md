@@ -40,18 +40,40 @@ and importing the actions module until first database access. `Prisma()`
 construction and `import` become O(models you touch) instead of O(models in the
 schema). No API change; the first query on each model pays a one-time lookup.
 
-### `modelBackend = "slim"` (default: `"pydantic"`, experimental)
+### `modelBackend` (default: `"pydantic"`, experimental)
 
-Generates pydantic-free `__slots__` record classes deserialized by compiled
-per-model converters (datetimes, Decimal, Base64, Json, BigInt, nested relations).
-Requires `separateModelFiles`. Keeps the pydantic-shaped surface most code relies
-on (`model_dump()`, `dict()`, `json()`, keyword construction, `Model.prisma()`),
-but records **convert trusted engine data rather than validating arbitrary
-input** — keep the default backend where you feed untrusted data into models, or
-validate at the boundary. Not supported: `create_partial()`, subclass field
-overrides, and the mypy plugin's model checks. See
-[`benchmarks/pg-lab/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks/pg-lab)
-for measurements.
+Selects how record models are generated. Both alternative backends keep the
+pydantic-shaped surface most code relies on (`model_dump()`, `dict()`, `json()`,
+keyword construction, `Model.prisma()`), but **convert trusted engine data
+rather than validating arbitrary input** — keep the default backend where you
+feed untrusted data into models, or validate at the boundary. Not supported on
+either: `create_partial()`, subclass field overrides, the mypy plugin's model
+checks.
+
+**`"msgspec"` — recommended alternative.** Generates
+[msgspec](https://jcristharif.com/msgspec/) `Struct` records decoded in C: the
+lowest query latency of any backend measured (−12% vs pydantic on the pg-lab
+workload) at near-slim memory. Requires `pip install prisma[msgspec]` (or
+`msgspec` directly) and is incompatible with `separateModelFiles` (cyclic
+relation references must resolve against a single module — cheap, since structs
+compile no per-model schemas). Records additionally offer `to_pydantic()`,
+returning a real `pydantic.BaseModel` (lazily built, cached twin class) for
+integrations that require one, e.g. FastAPI `response_model`.
+
+```prisma
+generator client {
+  provider     = "prisma-client-py"
+  modelBackend = "msgspec"
+}
+```
+
+**`"slim"` — zero-dependency alternative.** Pydantic-free `__slots__` records
+deserialized by exec-compiled per-model converters. Slightly lower RSS than
+msgspec, slightly slower queries, no third-party dependency. Requires
+`separateModelFiles = true`.
+
+See [`benchmarks/pg-lab/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks/pg-lab)
+for the head-to-head measurements behind these recommendations.
 
 > **All options are opt-in (off by default), so installing the fork and regenerating
 > reproduces upstream output exactly.** Enable the options below as needed.

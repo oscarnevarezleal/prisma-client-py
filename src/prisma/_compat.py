@@ -306,9 +306,8 @@ def model_parse_strict(model: type[_ModelT], obj: Any) -> _ModelT:
 
 
 def model_parse(model: type[_ModelT], obj: Any) -> _ModelT:
-    # slim backend models deserialize themselves (no pydantic involved)
-    from_engine = getattr(model, '__prisma_slim__', None)
-    if from_engine is not None:
+    # slim/msgspec backend models deserialize themselves (no pydantic involved)
+    if getattr(model, '__prisma_slim__', False):
         return model.from_engine(obj)  # type: ignore[attr-defined,no-any-return]
 
     # PRISMA_PY_FAST_PARSE: trusted engine responses skip validation and are

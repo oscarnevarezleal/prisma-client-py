@@ -252,6 +252,14 @@ class Generator(GenericGenerator[PythonData]):
                 'add `separateModelFiles = true` to your generator block.'
             )
 
+        if config.model_backend == 'msgspec' and config.separate_model_files:
+            raise ValueError(
+                'modelBackend = "msgspec" is incompatible with separateModelFiles: msgspec\n'
+                'resolves cyclic relation references against a single module. Remove\n'
+                '`separateModelFiles = true` from your generator block (msgspec structs\n'
+                'compile no per-model schemas, so the single file stays cheap to import).'
+            )
+
         try:
             # Handle separate model files if enabled
             if config.separate_model_files:
