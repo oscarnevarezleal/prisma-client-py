@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator
+from typing import TYPE_CHECKING, Any, Dict, Iterator
 
 import pytest
 
 from ..dmmf_sample import SAMPLE, loaded_datamodel
 
-sqlalchemy = pytest.importorskip('sqlalchemy', reason='prisma[sqlalchemy] is not installed')
+pytest.importorskip('sqlalchemy', reason='prisma[sqlalchemy] is not installed')
+
+if TYPE_CHECKING:
+    import sqlalchemy as sa
 
 
 @pytest.fixture(scope='package', name='generated')
@@ -26,7 +29,33 @@ def generated_fixture() -> Iterator[Dict[str, Any]]:
 
 
 @pytest.fixture(scope='package', name='metadata')
-def metadata_fixture(generated: Dict[str, Any]) -> Any:
+def metadata_fixture(generated: Dict[str, Any]) -> 'sa.MetaData':
     from prisma.sa import build_metadata
 
     return build_metadata(generated['schema'], generated['enums'], generated['provider'])
+
+
+@pytest.fixture(name='installed')
+def installed_fixture(generated: Dict[str, Any]) -> Iterator[None]:
+    """Make `prisma.sa`'s public API behave as if the client were generated
+    with `schemaMetadata = true`.
+
+    The dev client is generated without it — deliberately, since that is the
+    default — so `sa.metadata()` would otherwise raise. Everything the public
+    accessors read goes through `prisma.metadata`, so populating that module is
+    the whole of the setup.
+    """
+    import prisma.metadata
+    from prisma import sa as prisma_sa
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(prisma.metadata, 'SCHEMA', generated['schema'], raising=False)
+        patch.setattr(prisma.metadata, 'ENUM_SCHEMA', generated['enums'], raising=False)
+        patch.setattr(prisma.metadata, 'DATABASE_PROVIDER', generated['provider'], raising=False)
+        prisma_sa.clear_cache()
+        try:
+            yield
+        finally:
+            # the cache holds a MetaData built from the patched module; leaving
+            # it in place would leak into tests that expect the real one
+            prisma_sa.clear_cache()

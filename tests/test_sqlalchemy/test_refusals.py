@@ -1,0 +1,252 @@
+"""Cases where the builder must raise rather than emit something plausible.
+
+Every one of these has a tempting wrong answer. A wrong type table or an
+invented referential action does not fail here — it fails as a schema diff on
+someone else's database during a deploy, which is both later and harder to
+attribute. So each is pinned to a named exception with the offending value in
+the message.
+
+Built from hand-written metadata dicts rather than a recorded schema, because
+most of these shapes cannot be expressed in a `.prisma` file at all: Prisma
+would reject `Json` on SQLite before the generator ever ran.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict
+
+import pytest
+
+from prisma.sa import build_metadata
+from prisma.sa._types import SUPPORTED_PROVIDERS, UnsupportedProviderError
+
+
+def field(**overrides: Any) -> Dict[str, Any]:
+    base: Dict[str, Any] = {
+        'column': 'id',
+        'kind': 'scalar',
+        'type': 'String',
+        'is_list': False,
+        'nullable': False,
+        'is_id': True,
+        'is_unique': False,
+        'is_read_only': False,
+        'is_updated_at': False,
+        'default': None,
+        'native_type': None,
+    }
+    base.update(overrides)
+    return base
+
+
+def model(fields: Dict[str, Any], **overrides: Any) -> Dict[str, Any]:
+    base: Dict[str, Any] = {
+        'table': 'Thing',
+        'primary_key': {'name': None, 'db_name': None, 'fields': ['id'], 'columns': ['id']},
+        'fields': fields,
+        'relations': {},
+        'uniques': [],
+        'indexes': [],
+    }
+    base.update(overrides)
+    return base
+
+
+def schema(**fields: Any) -> Dict[str, Any]:
+    return {'Thing': model({'id': field(), **fields})}
+
+
+# -- providers ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize('provider', ['mysql', 'sqlite', 'sqlserver', 'cockroachdb', 'mongodb'])
+def test_unverified_providers_refuse(provider: str) -> None:
+    """Only providers checked against a real `prisma db push` are claimed."""
+    with pytest.raises(UnsupportedProviderError) as exc:
+        build_metadata(schema(), {}, provider)
+
+    assert provider in str(exc.value)
+    # the message must say what *is* supported, or there is nothing to act on
+    for supported in SUPPORTED_PROVIDERS:
+        assert supported in str(exc.value)
+    assert exc.value.provider == provider
+
+
+def test_unsupported_provider_is_a_not_implemented_error() -> None:
+    """Callers should be able to catch it without importing our exception."""
+    assert issubclass(UnsupportedProviderError, NotImplementedError)
+
+
+def test_supported_provider_list_is_not_aspirational() -> None:
+    """A provider in this set must have a scalar type table behind it."""
+    for provider in SUPPORTED_PROVIDERS:
+        build_metadata(schema(), {}, provider)
+
+
+# -- types --------------------------------------------------------------------
+
+
+def test_unknown_scalar_type_refuses() -> None:
+    """A Prisma release adding a scalar type must not silently map to nothing."""
+    with pytest.raises(NotImplementedError, match="Prisma type 'Quaternion'"):
+        build_metadata(schema(weird=field(column='weird', type='Quaternion', is_id=False)), {}, 'postgresql')
+
+
+# -- defaults -----------------------------------------------------------------
+
+
+def test_unknown_default_generator_refuses() -> None:
+    """Silently dropping an unrecognised generator loses the column's default."""
+    broken = field(column='id', default={'kind': 'generator', 'name': 'moonphase', 'args': []})
+    with pytest.raises(NotImplementedError, match='moonphase'):
+        build_metadata(schema(id=broken), {}, 'postgresql')
+
+
+@pytest.mark.parametrize('name', ['cuid', 'uuid', 'nanoid', 'ulid', 'auto'])
+def test_client_side_generators_are_accepted_and_emit_nothing(name: str) -> None:
+    """These are filled in by the client; the column has no DDL default."""
+    built = build_metadata(schema(id=field(default={'kind': 'generator', 'name': name, 'args': []})), {}, 'postgresql')
+    assert built.tables['Thing'].c['id'].server_default is None
+
+
+def test_dbgenerated_passes_the_expression_through() -> None:
+    built = build_metadata(
+        schema(id=field(default={'kind': 'generator', 'name': 'dbgenerated', 'args': ['gen_random_uuid()']})),
+        {},
+        'postgresql',
+    )
+    assert str(built.tables['Thing'].c['id'].server_default.arg) == 'gen_random_uuid()'
+
+
+def test_dbgenerated_without_an_argument_emits_nothing() -> None:
+    """`dbgenerated()` with no argument names a type Prisma cannot express.
+
+    There is no expression to emit, and inventing one would be worse than the
+    column simply having no default.
+    """
+    built = build_metadata(
+        schema(id=field(default={'kind': 'generator', 'name': 'dbgenerated', 'args': []})), {}, 'postgresql'
+    )
+    assert built.tables['Thing'].c['id'].server_default is None
+
+
+def test_string_literal_defaults_are_quoted() -> None:
+    built = build_metadata(
+        schema(name=field(column='name', is_id=False, default={'kind': 'literal', 'value': "O'Brien"})),
+        {},
+        'postgresql',
+    )
+    # the apostrophe must be escaped or the DDL is a syntax error
+    assert str(built.tables['Thing'].c['name'].server_default.arg) == "'O''Brien'"
+
+
+@pytest.mark.parametrize(('value', 'expected'), [(True, 'true'), (False, 'false')])
+def test_boolean_literal_defaults(value: bool, expected: str) -> None:
+    """`str(True)` is `'True'`, which PostgreSQL will not accept unquoted."""
+    built = build_metadata(
+        schema(flag=field(column='flag', type='Boolean', is_id=False, default={'kind': 'literal', 'value': value})),
+        {},
+        'postgresql',
+    )
+    assert str(built.tables['Thing'].c['flag'].server_default.arg) == expected
+
+
+# -- referential actions ------------------------------------------------------
+
+
+def relation(**overrides: Any) -> Dict[str, Any]:
+    base: Dict[str, Any] = {
+        'to': 'Thing',
+        'shape': 'to-one-owner',
+        'relation_name': 'ThingToThing',
+        'is_list': False,
+        'nullable': True,
+        'owner': True,
+        'back_field': None,
+        'fk_model': 'Thing',
+        'fk_fields': ['parentId'],
+        'fk_columns': ['parentId'],
+        'referenced_fields': ['id'],
+        'referenced_columns': ['id'],
+        'fk_required': False,
+        'on_delete': None,
+    }
+    base.update(overrides)
+    return base
+
+
+def self_relation_schema(**relation_overrides: Any) -> Dict[str, Any]:
+    return {
+        'Thing': model(
+            {'id': field(), 'parentId': field(column='parentId', is_id=False, nullable=True)},
+            relations={'parent': relation(**relation_overrides)},
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    ('declared', 'expected'),
+    [
+        ('Cascade', 'CASCADE'),
+        ('Restrict', 'RESTRICT'),
+        ('NoAction', 'NO ACTION'),
+        ('SetNull', 'SET NULL'),
+        ('SetDefault', 'SET DEFAULT'),
+    ],
+)
+def test_every_prisma_referential_action_is_mapped(declared: str, expected: str) -> None:
+    built = build_metadata(self_relation_schema(on_delete=declared), {}, 'postgresql')
+    (fk,) = [c for c in built.tables['Thing'].constraints if hasattr(c, 'ondelete')]
+    assert fk.ondelete == expected
+
+
+def test_unknown_referential_action_refuses() -> None:
+    with pytest.raises(NotImplementedError, match='Obliterate'):
+        build_metadata(self_relation_schema(on_delete='Obliterate'), {}, 'postgresql')
+
+
+def test_undeclared_action_depends_on_nullability() -> None:
+    """The single most consequential default in the whole translation."""
+    optional = build_metadata(self_relation_schema(fk_required=False), {}, 'postgresql')
+    required = build_metadata(self_relation_schema(fk_required=True), {}, 'postgresql')
+
+    def ondelete(built: Any) -> str:
+        (fk,) = [c for c in built.tables['Thing'].constraints if hasattr(c, 'ondelete')]
+        return str(fk.ondelete)
+
+    assert ondelete(optional) == 'SET NULL'
+    assert ondelete(required) == 'RESTRICT'
+
+
+# -- schemas the builder should handle without special-casing ------------------
+
+
+def test_model_with_no_primary_key() -> None:
+    """Prisma permits a model identified only by a unique constraint."""
+    built = build_metadata(
+        {
+            'Thing': model(
+                {'email': field(column='email', is_id=False)},
+                primary_key={'name': None, 'db_name': None, 'fields': [], 'columns': []},
+                uniques=[
+                    {
+                        'name': 'email',
+                        'db_name': 'Thing_email_key',
+                        'fields': ['email'],
+                        'columns': ['email'],
+                        'is_defined_on_field': True,
+                    }
+                ],
+            )
+        },
+        {},
+        'postgresql',
+    )
+    table = built.tables['Thing']
+    assert not table.primary_key.columns
+    assert [i.name for i in table.indexes] == ['Thing_email_key']
+
+
+def test_empty_schema_builds() -> None:
+    """A schema with no models is legal, if useless."""
+    assert build_metadata({}, {}, 'postgresql').tables == {}
