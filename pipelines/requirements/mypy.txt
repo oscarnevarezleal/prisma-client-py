@@ -2,4 +2,9 @@
 -r node.txt
 -r deps/mypy.txt
 -r deps/pydantic.txt
+# `prisma._msgspecmodel` ships in the package and is type-checked with it, but
+# msgspec is an optional runtime extra. Without it installed `msgspec.Struct`
+# resolves to Any and mypy reports 5 errors that do not exist for anyone who
+# actually uses the backend. Same reason sqlalchemy is in `test.txt`.
+-r deps/msgspec.txt
 types-mock

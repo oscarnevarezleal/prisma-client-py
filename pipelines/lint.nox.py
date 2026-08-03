@@ -13,7 +13,12 @@ def lint(session: nox.Session) -> None:
     session.install('-r', 'pipelines/requirements/lint.txt')
 
     # TODO: pyright doesn't resolve types correctly if we don't install inplace
-    session.install('-e', '.')
+    #
+    # The extras are needed too: `prisma._msgspecmodel` and `prisma.sa` ship in
+    # the package and are type-checked with it, so without their dependencies
+    # `msgspec.Struct` and the SQLAlchemy types resolve to Any and pyright
+    # reports errors that do not exist for anyone actually using the backends.
+    session.install('-e', '.[msgspec,sqlalchemy]')
 
     generate(session)
 

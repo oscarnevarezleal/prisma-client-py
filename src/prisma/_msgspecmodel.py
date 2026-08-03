@@ -180,8 +180,6 @@ def _pydantic_twin(cls: type) -> Any:
     if twin is None:
         import pydantic
 
-        from ._fastparse import converter_for_spec  # noqa: F401  (spec vocabulary reference)
-
         def spec_type(spec: Any) -> Any:
             if isinstance(spec, str):
                 return {

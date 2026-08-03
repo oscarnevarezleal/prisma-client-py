@@ -286,15 +286,15 @@ def model_rebuild(model: type[BaseModel]) -> None:
 
 
 def _fast_parse_enabled() -> bool:
-    global _FAST_PARSE
-    if _FAST_PARSE is None:
+    global _fast_parse_cache
+    if _fast_parse_cache is None:
         import os
 
-        _FAST_PARSE = os.environ.get('PRISMA_PY_FAST_PARSE', '') not in ('', '0', 'false', 'False')
-    return _FAST_PARSE
+        _fast_parse_cache = os.environ.get('PRISMA_PY_FAST_PARSE', '') not in ('', '0', 'false', 'False')
+    return _fast_parse_cache
 
 
-_FAST_PARSE: bool | None = None
+_fast_parse_cache: bool | None = None
 
 
 def model_parse_strict(model: type[_ModelT], obj: Any) -> _ModelT:

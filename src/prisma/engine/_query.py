@@ -145,7 +145,11 @@ class BaseQueryEngine:
             # process (with our timeout semantics) once the last user is gone.
             key, self._shared_key = self._shared_key, None
             self.process = None
-            _shared.registry.release(key, kill=lambda proc: self._terminate_popen(proc, timeout))
+
+            def kill(proc: 'subprocess.Popen[bytes]') -> None:
+                self._terminate_popen(proc, timeout)
+
+            _shared.registry.release(key, kill=kill)
             return
 
         if self.process is None:

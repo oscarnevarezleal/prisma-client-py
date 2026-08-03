@@ -85,10 +85,6 @@ def _to_base64(value: Any) -> Any:
 # --------------------------------------------------------------------------- #
 # plan compilation
 # --------------------------------------------------------------------------- #
-def _is_prisma_model(annotation: Any) -> bool:
-    return isinstance(annotation, type) and hasattr(annotation, '__prisma_model__')
-
-
 def converter_for_annotation(annotation: Any) -> Optional[Converter]:
     """Converter for a resolved type annotation; None means passthrough."""
     origin = get_origin(annotation)

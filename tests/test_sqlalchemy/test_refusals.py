@@ -211,7 +211,7 @@ def self_relation_schema(**relation_overrides: Any) -> Dict[str, Any]:
 )
 def test_every_prisma_referential_action_is_mapped(declared: str, expected: str) -> None:
     built = build_metadata(self_relation_schema(on_delete=declared), {}, 'postgresql')
-    (fk,) = [c for c in built.tables['Thing'].constraints if hasattr(c, 'ondelete')]
+    (fk,) = [c for c in built.tables['Thing'].constraints if isinstance(c, sa.ForeignKeyConstraint)]
     assert fk.ondelete == expected
 
 

@@ -26,6 +26,7 @@ from __future__ import annotations
 import json as _json
 import importlib
 from typing import Any, Dict, List, Tuple, Callable, ClassVar, Optional
+from typing_extensions import override
 
 from ._fastparse import Converter, converter_for_spec
 
@@ -174,14 +175,17 @@ class SlimModel:
     def json(self, *, exclude_none: bool = False) -> str:
         return self.model_dump_json(exclude_none=exclude_none)
 
+    @override
     def __repr__(self) -> str:
         fields = ', '.join(f'{name}={getattr(self, name, None)!r}' for name in type(self).__prisma_fields__)
         return f'{type(self).__name__}({fields})'
 
+    @override
     def __eq__(self, other: object) -> bool:
         if type(other) is not type(self):
             return NotImplemented
         return all(getattr(self, name, None) == getattr(other, name, None) for name in type(self).__prisma_fields__)
 
+    @override
     def __hash__(self) -> int:  # id-based; records are mutable
         return object.__hash__(self)
