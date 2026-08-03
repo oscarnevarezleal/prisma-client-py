@@ -4,8 +4,9 @@ This is deliberately built at runtime from `metadata.SCHEMA` rather than emitted
 as declarative source by a template. One implementation, tested once against a
 real database, beats a template whose output has to be re-checked for every
 schema shape — and the query compiler wants `Table` objects (SQLAlchemy Core),
-not declarative classes, anyway. `prisma py sqlalchemy generate` dumps
-declarative source for people who want it checked in.
+not declarative classes, anyway. Dumping declarative source for people who want
+it checked in is planned as `prisma py sqlalchemy generate`, and does not exist
+yet.
 
 The correctness bar is an **empty Alembic autogenerate diff** against a database
 built by `prisma db push`, plus direct assertions on the things autogenerate
