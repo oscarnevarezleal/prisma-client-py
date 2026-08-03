@@ -13,7 +13,10 @@ chokes on a huge `types.py`).
 paths (`from prisma import Prisma`, `from prisma.models import User`) are identical.
 What changes is how the client is *generated*.
 
-See [`benchmarks/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks) for the numbers behind the claims below.
+See [Performance Findings](performance-findings.md) for the consolidated measurements —
+what worked, what didn't, and where a Prisma query actually spends its time —
+or [`benchmarks/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks)
+for the harnesses behind the claims below.
 
 ## What's different at a glance
 
@@ -68,9 +71,12 @@ either: `create_partial()`, subclass field overrides, the mypy plugin's model
 checks.
 
 **`"msgspec"` — recommended alternative.** Generates
-[msgspec](https://jcristharif.com/msgspec/) `Struct` records decoded in C: the
-lowest query latency of any backend measured (−12% vs pydantic on the pg-lab
-workload) at near-slim memory. Requires `pip install prisma[msgspec]` (or
+[msgspec](https://jcristharif.com/msgspec/) `Struct` records decoded in C.
+Against the default backend it is ~8 MB lighter and modestly faster; against
+`"slim"` it is **statistically tied** (they finish within ~4% and the ordering
+has flipped between measurement runs), so choose on constraints rather than on
+the score — msgspec is a maintained C library and is the faster of the two on
+bulk deserialization. Requires `pip install prisma[msgspec]` (or
 `msgspec` directly) and is incompatible with `separateModelFiles` (cyclic
 relation references must resolve against a single module — cheap, since structs
 compile no per-model schemas). Records additionally offer `to_pydantic()`,
@@ -85,9 +91,9 @@ generator client {
 ```
 
 **`"slim"` — zero-dependency alternative.** Pydantic-free `__slots__` records
-deserialized by exec-compiled per-model converters. Slightly lower RSS than
-msgspec, slightly slower queries, no third-party dependency. Requires
-`separateModelFiles = true`.
+deserialized by exec-compiled per-model converters. Marginally lower RSS than
+msgspec and no third-party dependency, at the cost of hand-rolled
+deserializers this fork maintains itself. Requires `separateModelFiles = true`.
 
 See [`benchmarks/pg-lab/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks/pg-lab)
 for the head-to-head measurements behind these recommendations.

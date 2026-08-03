@@ -58,6 +58,7 @@ nav:
       - Partial Types: getting_started/partial-types.md
       - Migrating from Upstream: migrating-from-upstream.md
       - Migrating to SQLAlchemy: migrating-to-sqlalchemy.md
+      - Performance Findings: performance-findings.md
   - Reference:
       - Query Operations: reference/operations.md
       - Client: reference/client.md
