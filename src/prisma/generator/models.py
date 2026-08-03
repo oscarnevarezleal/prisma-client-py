@@ -885,6 +885,14 @@ class Config(BaseSettings):
             extra='forbid',
             use_enum_values=True,
             populate_by_name=True,
+            # `modelBackend` is a generator option, not a pydantic model
+            # attribute, but its `model_` prefix collides with pydantic's
+            # reserved namespace. Pydantic 2.8 warns unconditionally; 2.10+ only
+            # warns on a genuine collision, so this reproduces on the pinned CI
+            # version and not on a newer local one. The schema used by the tests
+            # generates with `python -W error`, deliberately, so the warning is
+            # an error and every generate — and therefore every test job — fails.
+            protected_namespaces=(),
         )
     else:
         if not TYPE_CHECKING:
