@@ -113,15 +113,18 @@ than against documentation, and only providers checked that way are listed; an
 unverified provider raises `UnsupportedProviderError` naming itself rather than
 emitting a plausible-looking schema that diffs on someone else's deploy.
 
-Three things it will not guess:
+`@db.*` native types **are** honoured. Prisma does not send them through the
+generator protocol — verified, not assumed — so they are recovered by lexing the raw
+schema text, which the generator payload does carry. An annotation with no mapping
+raises naming itself rather than falling back to the default type: a `@db.Uuid` read
+as `text` is not a diff to fix later, it is a full-database rewrite.
+
+Two things it will not guess:
 
 - **A self-referential implicit many-to-many.** The join table is built, but which
   side is column `A` is not recoverable from the DMMF, so the relation is flagged
   `join_ambiguous`. Traversing it needs an explicit decision from you.
-- **`@db.*` native type annotations.** Prisma does not send these through the
-  generator protocol at all — verified, not assumed — so `@db.VarChar(255)` is
-  invisible. If you use them, diff once after cutover.
-- **`relationMode = "prisma"`.** Also absent from the generator payload. Under it the
+- **`relationMode = "prisma"`.** Absent from the generator payload. Under it the
   database has *no* foreign keys at all, so the FK constraints built here would be a
   diff against every table.
 

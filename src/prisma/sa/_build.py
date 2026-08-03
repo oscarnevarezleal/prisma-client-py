@@ -94,7 +94,7 @@ def _build_table(
     args: List[Any] = []
 
     for name, field in spec['fields'].items():
-        args.append(_build_column(field, provider, enum_types, is_primary_key=name in primary_key))
+        args.append(_build_column(field, provider, enum_types, md, is_primary_key=name in primary_key))
 
     if spec['primary_key']['db_name'] is not None:
         # `@@id(map: "...")`. Left to the dialect otherwise, which produces the
@@ -122,6 +122,7 @@ def _build_table(
             kwargs[f'{provider}_using'] = index['algorithm'].lower()
         sa.Index(index['name'], *[table.c[column] for column in index['columns']], **kwargs)
 
+    _own_sequences(table, spec)
     return table
 
 
@@ -129,13 +130,16 @@ def _build_column(
     field: Mapping[str, Any],
     provider: str,
     enum_types: Mapping[str, Any],
+    metadata: sa.MetaData,
     *,
     is_primary_key: bool,
 ) -> sa.Column[Any]:
     if field['kind'] == 'enum':
         type_ = enum_types[field['type']]
     else:
-        type_ = scalar_type(provider, field['type'])
+        # `@db.*` wins over the default scalar mapping. Ignoring it turns every
+        # `@db.Uuid` key into `text`, which is a table rewrite to correct later.
+        type_ = scalar_type(provider, field['type'], field.get('native_type'))
 
     nullable = field['nullable']
     if field['is_list']:
@@ -150,14 +154,58 @@ def _build_column(
     # An `Int @id` without it is a plain integer column.
     autoincrement = default.get('kind') == 'generator' and default.get('name') == 'autoincrement'
 
+    args: List[Any] = [field['column'], type_]
+    server_default = _server_default(field, enum_types)
+
+    # A non-primary-key `@default(autoincrement())` needs an explicit sequence.
+    # SQLAlchemy only emits SERIAL for an integer *primary* key; on any other
+    # column it treats a `Sequence` as a client-side pre-execute default and
+    # emits no DDL default at all. The column then lands NOT NULL with nothing
+    # to fill it and every INSERT into that table fails — silently, because
+    # Alembic does not compare server defaults by default, so autogenerate still
+    # reports an empty diff.
+    sequence = field.get('sequence')
+    if sequence:
+        args.append(sa.Sequence(sequence, data_type=_sequence_data_type(field), metadata=metadata))
+        # quoted because Prisma's names are case-sensitive
+        server_default = sa.text(f'nextval(\'"{sequence}"\'::regclass)')
+
     return sa.Column(
-        field['column'],
-        type_,
+        *args,
         primary_key=is_primary_key,
         nullable=nullable,
         autoincrement=autoincrement,
-        server_default=_server_default(field, enum_types),
+        server_default=server_default,
     )
+
+
+def _sequence_data_type(field: Mapping[str, Any]) -> Any:
+    """`CREATE SEQUENCE … AS integer` vs the bigint default.
+
+    Prisma sizes the sequence to the column: `Int` gives `AS integer`, `BigInt`
+    gives the `bigint` SQLAlchemy would default to anyway. Omitting it makes
+    every `Int` sequence a bigint one, which is a diff on every such column.
+    """
+    return sa.BigInteger() if field['type'] == 'BigInt' else sa.Integer()
+
+
+def _own_sequences(table: sa.Table, spec: Mapping[str, Any]) -> None:
+    """`ALTER SEQUENCE … OWNED BY …`, which SQLAlchemy has no API for.
+
+    Ownership is what makes the sequence disappear with the column and what
+    `pg_get_serial_sequence` looks at; `SERIAL` sets it implicitly and an
+    explicit `Sequence` does not. Without it the sequence outlives a dropped
+    column and shows up as a diff.
+    """
+    for field in spec['fields'].values():
+        sequence = field.get('sequence')
+        if not sequence:
+            continue
+        sa.event.listen(
+            table,
+            'after_create',
+            sa.DDL(f'ALTER SEQUENCE "{sequence}" OWNED BY "{table.name}"."{field["column"]}"'),
+        )
 
 
 def _server_default(field: Mapping[str, Any], enum_types: Mapping[str, Any]) -> Optional[Any]:
@@ -172,7 +220,10 @@ def _server_default(field: Mapping[str, Any], enum_types: Mapping[str, Any]) -> 
         return None
 
     if default['kind'] == 'generator':
-        name = default['name']
+        # Prisma normalises `uuid()` to `uuid(4)` on the wire; the generator
+        # already strips the version, but be defensive — an unstripped name here
+        # falls through to the `raise` and blocks the whole schema.
+        name = default['name'].split('(', 1)[0]
         if name in _CLIENT_SIDE_GENERATORS:
             return None
         if name == 'autoincrement':
@@ -202,9 +253,43 @@ def _literal_sql(field: Mapping[str, Any], value: Any, enum_types: Mapping[str, 
         return f'{_quote(str(value))}::"{enum.name}"'
 
     if field['is_list']:
-        return 'ARRAY[' + ', '.join(_scalar_sql(field['type'], item) for item in value) + ']'
+        # The cast is not optional. PostgreSQL rejects a bare `ARRAY[]` with
+        # `cannot determine type of empty array`, and `create_all()` aborts on
+        # the first such table. Prisma emits `ARRAY[]::uuid[]`.
+        elements = ', '.join(_scalar_sql(field['type'], item) for item in value)
+        return f'ARRAY[{elements}]::{_array_element_sql_type(field)}[]'
 
     return _scalar_sql(field['type'], value)
+
+
+#: Prisma scalar -> the SQL type name to cast an array literal to. Only reached
+#: for scalar list defaults, which Prisma allows on PostgreSQL only.
+_ARRAY_ELEMENT_TYPES = {
+    'String': 'text',
+    'Boolean': 'boolean',
+    'Int': 'integer',
+    'BigInt': 'bigint',
+    'Float': 'double precision',
+    'Decimal': 'numeric',
+    'DateTime': 'timestamp',
+    'Json': 'jsonb',
+    'Bytes': 'bytea',
+}
+
+
+def _array_element_sql_type(field: Mapping[str, Any]) -> str:
+    native = field.get('native_type')
+    if native:
+        # `readBy String[] @default([]) @db.Uuid` -> `ARRAY[]::uuid[]`
+        return str(native[0]).lower()
+
+    try:
+        return _ARRAY_ELEMENT_TYPES[field['type']]
+    except KeyError:
+        raise NotImplementedError(
+            f'No array element type for Prisma type {field["type"]!r}; '
+            'an uncast array literal is a runtime error, not a diff'
+        ) from None
 
 
 def _scalar_sql(prisma_type: str, value: Any) -> str:

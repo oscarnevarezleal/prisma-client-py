@@ -77,7 +77,12 @@ class DefaultSpec(TypedDict, total=False):
     #: field defaulting to ``"uuid"`` into a uuid generator.
     kind: Literal['generator', 'literal']
     #: generator only: ``cuid``, ``uuid``, ``now``, ``autoincrement``, ``dbgenerated``, ...
+    #: The version is split off into ``version``: Prisma normalises
+    #: ``@default(uuid())`` to ``uuid(4)`` on the wire, so the schema text and
+    #: the DMMF disagree and matching on the raw name misses every such field.
     name: str
+    #: generator only: ``'4'`` for ``uuid(4)``, ``None`` when unversioned
+    version: Optional[str]
     args: List[Any]
     #: literal only. Two shapes to watch: an enum default is the *Python* member
     #: name and must go through `enum_label` before it reaches SQL, and a BigInt
@@ -98,9 +103,15 @@ class FieldSchema(TypedDict):
     is_read_only: bool
     is_updated_at: bool
     default: Optional[DefaultSpec]
-    #: ``@db.*``. Present-day Prisma does not send this through the generator
-    #: protocol, so it is ``None`` for every field; see `generator.models.Field`.
+    #: ``@db.*`` as ``[type, args]``, e.g. ``['VarChar', ['255']]``. Prisma does
+    #: not send this through the generator protocol at all, so it is recovered by
+    #: lexing the raw schema text; ``None`` when the field is unannotated.
     native_type: Optional[List[Any]]
+    #: The sequence backing a **non-primary-key** ``@default(autoincrement())``.
+    #: A primary key gets ``SERIAL``, which creates its sequence implicitly; any
+    #: other column needs this named explicitly or it ends up ``NOT NULL`` with
+    #: no default and every INSERT fails.
+    sequence: Optional[str]
 
 
 class RelationSchema(TypedDict, total=False):
@@ -131,6 +142,8 @@ class RelationSchema(TypedDict, total=False):
     join_other_column: Optional[str]
     #: set for a self-referential many-to-many, where which side is column `A`
     #: is not recoverable from the DMMF. Consumers must refuse rather than guess.
+    #: Present on **every** relation, ``False`` where trivially so, so that
+    #: checking it never raises.
     join_ambiguous: bool
 
 

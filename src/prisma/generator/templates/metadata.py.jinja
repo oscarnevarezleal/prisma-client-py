@@ -30,7 +30,7 @@ RELATIONAL_FIELD_MAPPINGS: dict[str, dict[str, str]] = {
 DATABASE_PROVIDER: str = '{{ datasources[0].active_provider }}'
 
 SCHEMA: dict[str, dict[str, object]] = (
-{{ as_literal(build_schema_metadata(dmmf.datamodel)) }}
+{{ as_literal(build_schema_metadata(dmmf.datamodel, datamodel)) }}
 )
 
 ENUM_SCHEMA: dict[str, dict[str, object]] = (

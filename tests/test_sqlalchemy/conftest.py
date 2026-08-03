@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator
 
 import pytest
 
-from ..dmmf_sample import SAMPLE, loaded_datamodel
+from ..dmmf_sample import SAMPLE, schema_text, loaded_datamodel
 
 pytest.importorskip('sqlalchemy', reason='prisma[sqlalchemy] is not installed')
 
@@ -22,7 +22,7 @@ def generated_fixture() -> Iterator[Dict[str, Any]]:
 
     with loaded_datamodel() as datamodel:
         yield {
-            'schema': build_schema_metadata(datamodel),
+            'schema': build_schema_metadata(datamodel, schema_text()),
             'enums': build_enum_metadata(datamodel),
             'provider': 'postgresql',
         }

@@ -1,11 +1,12 @@
 {
+ "datamodel": "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"BENCH_DATABASE_URL\")\n}\n\ngenerator client {\n  provider                    = \"python -m prisma\"\n  interface                   = \"asyncio\"\n  output                      = \"./client\"\n  enable_experimental_decimal = true\n  schemaMetadata              = true\n}\n\nenum Role {\n  OWNER\n  ADMIN  @map(\"administrator\")\n  VIEWER\n}\n\nmodel Account {\n  id        String   @id @default(cuid())\n  email     String   @unique\n  slug      String   @map(\"url_slug\")\n  role      Role     @default(VIEWER)\n  balance   Decimal\n  payload   Json?\n  secret    Bytes?\n  visits    BigInt   @default(0)\n  tags      String[]\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n  posts     Entry[]\n  profile   Profile?\n\n  @@unique([slug, role], name: \"slug_role\")\n  @@index([email, createdAt], map: \"account_email_created_idx\")\n  @@map(\"accounts\")\n}\n\nmodel Entry {\n  id        String  @id @default(cuid())\n  accountId String\n  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)\n  title     String\n  parentId  String?\n  parent    Entry?  @relation(\"tree\", fields: [parentId], references: [id])\n  children  Entry[] @relation(\"tree\")\n  labels    Label[]\n\n  @@index([accountId])\n}\n\n// The FK lives on the *other* side of a to-one relation, which compiles\n// differently to `Entry.account` even though both are `to-one`.\nmodel Profile {\n  id        Int     @id @default(autoincrement())\n  accountId String  @unique @map(\"account_id\")\n  account   Account @relation(fields: [accountId], references: [id])\n  bio       String?\n}\n\nmodel Label {\n  id      Int     @id @default(autoincrement())\n  name    String  @map(\"label_name\")\n  entries Entry[]\n  related Label[] @relation(\"similar\")\n  similar Label[] @relation(\"similar\")\n\n  @@map(\"labels\")\n}\n\nmodel Composite {\n  left  String\n  right String\n  note  String?\n\n  @@id([left, right])\n}\n\n// Every model below covers a defect found by a client running the migration\n// runbook against a 182-model production schema. All five produced either a\n// crash or a silent divergence, and none was reachable from the models above.\nmodel Ticket {\n  // B2: Prisma normalises `uuid()` to `uuid(4)` on the wire. Left attached, the\n  // versioned name matched no allowlist entry and blocked the whole schema.\n  id String @id @default(uuid()) @db.Uuid\n\n  // B5: a non-primary-key autoincrement. SQLAlchemy emits SERIAL only for an\n  // integer *primary* key, so this silently lost its sequence and every INSERT\n  // failed \u2014 with an empty Alembic diff, because server defaults are not\n  // compared.\n  ticketNumber Int    @default(autoincrement())\n  bigNumber    BigInt @default(autoincrement())\n\n  // B4: an empty scalar list default. A bare `ARRAY[]` is a PostgreSQL error,\n  // not a diff: `cannot determine type of empty array`.\n  readBy   String[] @default([]) @db.Uuid\n  keywords String[] @default([\"urgent\", \"billing\"])\n\n  // B1: `@db.*` never reaches the generator payload, so these read as `text`\n  // unless the raw schema is lexed. On the reporting client that was 554\n  // columns including every primary and foreign key.\n  reference String   @db.VarChar(40)\n  amount    Decimal  @db.Decimal(12, 2)\n  seenAt    DateTime @db.Timestamptz(6)\n  priority  Int      @db.SmallInt\n\n  links TicketRequirementsOnDocuments[]\n}\n\n// B3: the derived unique constraint name is 81 characters. PostgreSQL truncates\n// at 63 and so does Prisma; SQLAlchemy raises `IdentifierError` before emitting\n// any SQL, which fails the Alembic step outright.\nmodel TicketRequirementsOnDocuments {\n  documentId            String\n  documentRequirementId String\n  ticketId              String @db.Uuid\n  ticket                Ticket @relation(fields: [ticketId], references: [id])\n\n  @@id([documentId, documentRequirementId])\n  @@unique([documentId, documentRequirementId, ticketId])\n  @@map(\"ticket_requirements_on_documents\")\n}\n",
  "datasources": [
   {
    "activeProvider": "postgresql",
    "name": "db",
    "provider": "postgresql",
    "schemas": [],
-   "sourceFilePath": "/tmp/claude-0/-home-user-prisma-client-py/29c2c0a1-cc17-55e1-b01b-febca43467c6/scratchpad/dmmfrec/schema.prisma",
+   "sourceFilePath": "/tmp/claude-0/-home-user-prisma-client-py/29c2c0a1-cc17-55e1-b01b-febca43467c6/scratchpad/rec2/schema.prisma",
    "url": {
     "fromEnvVar": "BENCH_DATABASE_URL",
     "value": null
@@ -145,6 +146,45 @@
      "isDefinedOnField": false,
      "model": "Composite",
      "type": "id"
+    },
+    {
+     "fields": [
+      {
+       "name": "id"
+      }
+     ],
+     "isDefinedOnField": true,
+     "model": "Ticket",
+     "type": "id"
+    },
+    {
+     "fields": [
+      {
+       "name": "documentId"
+      },
+      {
+       "name": "documentRequirementId"
+      }
+     ],
+     "isDefinedOnField": false,
+     "model": "TicketRequirementsOnDocuments",
+     "type": "id"
+    },
+    {
+     "fields": [
+      {
+       "name": "documentId"
+      },
+      {
+       "name": "documentRequirementId"
+      },
+      {
+       "name": "ticketId"
+      }
+     ],
+     "isDefinedOnField": false,
+     "model": "TicketRequirementsOnDocuments",
+     "type": "unique"
     }
    ],
    "models": [
@@ -713,6 +753,256 @@
      },
      "uniqueFields": [],
      "uniqueIndexes": []
+    },
+    {
+     "dbName": null,
+     "fields": [
+      {
+       "default": {
+        "args": [],
+        "name": "uuid(4)"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": true,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "id",
+       "type": "String"
+      },
+      {
+       "default": {
+        "args": [],
+        "name": "autoincrement"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "ticketNumber",
+       "type": "Int"
+      },
+      {
+       "default": {
+        "args": [],
+        "name": "autoincrement"
+       },
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "bigNumber",
+       "type": "BigInt"
+      },
+      {
+       "default": [],
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "readBy",
+       "type": "String"
+      },
+      {
+       "default": [
+        "urgent",
+        "billing"
+       ],
+       "hasDefaultValue": true,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "keywords",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "reference",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "amount",
+       "type": "Decimal"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "seenAt",
+       "type": "DateTime"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "priority",
+       "type": "Int"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": true,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "links",
+       "relationFromFields": [],
+       "relationName": "TicketToTicketRequirementsOnDocuments",
+       "relationToFields": [],
+       "type": "TicketRequirementsOnDocuments"
+      }
+     ],
+     "isGenerated": false,
+     "name": "Ticket",
+     "primaryKey": null,
+     "uniqueFields": [],
+     "uniqueIndexes": []
+    },
+    {
+     "dbName": "ticket_requirements_on_documents",
+     "fields": [
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "documentId",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "documentRequirementId",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": true,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "scalar",
+       "name": "ticketId",
+       "type": "String"
+      },
+      {
+       "hasDefaultValue": false,
+       "isGenerated": false,
+       "isId": false,
+       "isList": false,
+       "isReadOnly": false,
+       "isRequired": true,
+       "isUnique": false,
+       "isUpdatedAt": false,
+       "kind": "object",
+       "name": "ticket",
+       "relationFromFields": [
+        "ticketId"
+       ],
+       "relationName": "TicketToTicketRequirementsOnDocuments",
+       "relationToFields": [
+        "id"
+       ],
+       "type": "Ticket"
+      }
+     ],
+     "isGenerated": false,
+     "name": "TicketRequirementsOnDocuments",
+     "primaryKey": {
+      "fields": [
+       "documentId",
+       "documentRequirementId"
+      ],
+      "name": null
+     },
+     "uniqueFields": [
+      [
+       "documentId",
+       "documentRequirementId",
+       "ticketId"
+      ]
+     ],
+     "uniqueIndexes": [
+      {
+       "fields": [
+        "documentId",
+        "documentRequirementId",
+        "ticketId"
+       ],
+       "name": null
+      }
+     ]
     }
    ],
    "types": []

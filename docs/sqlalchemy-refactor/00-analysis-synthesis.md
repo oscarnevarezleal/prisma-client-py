@@ -83,11 +83,17 @@ generator payload and must be lexed out of the raw schema text.
 **Status: closed** (`df647c0`), with one correction to the table above. G2 is
 not a case of us discarding what Prisma sends — there are **zero `nativeType`
 keys in the entire wire payload**, verified against a schema using
-`@db.VarChar(255)` and `@db.Decimal(12,2)`. The field is modelled so a future
-Prisma release is picked up automatically, but today it is `None` for every
-field and `@db.*` is only recoverable by lexing the raw schema text, which
-`GenericData.datamodel` does carry. `relationMode` is in the same position and
-is **still open**.
+`@db.VarChar(255)` and `@db.Decimal(12,2)`.
+
+G2 is now closed by the other route: `GenericData.datamodel` carries the raw
+schema text, so `generator/_native_types.py` lexes the annotations out of it and
+the metadata reports them. This was forced by a field report — on a 182-model
+production schema, `@db.*` covered 554 columns including every primary and
+foreign key, and reading them as `text` is a full-database rewrite rather than a
+post-cutover diff. See `01-field-report-response.md`.
+
+`relationMode` is in the same position — absent from the payload — and is
+**still open**. It is recoverable the same way if it becomes a priority.
 
 `tests/test_generation/test_dmmf_completeness.py` now asserts that the modelled
 field set covers the wire key set, so the next such gap fails a test instead of
@@ -544,6 +550,7 @@ wrong, so the code raises or flags instead:
 | `@db.*` native types | not sent through the generator protocol at all (verified) | precision/length annotations invisible; recoverable only by lexing the schema text |
 | `relationMode = "prisma"` | not sent either | the database has *no* FKs; the constraints we build would diff against every table |
 | any provider but PostgreSQL | type table not verified against a real `db push` | `UnsupportedProviderError` naming the provider |
+| an unmapped `@db.*` annotation | no verified type for it | raises naming the annotation, rather than falling back to the default type |
 
 ---
 

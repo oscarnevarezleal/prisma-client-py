@@ -30,7 +30,7 @@ from prisma.generator.models import (
     build_schema_metadata,
 )
 
-from ..dmmf_sample import SAMPLE, loaded_datamodel
+from ..dmmf_sample import SAMPLE, schema_text, loaded_datamodel
 
 
 @pytest.fixture(scope='module', name='datamodel')
@@ -44,7 +44,7 @@ def datamodel_fixture() -> Iterator[Datamodel]:
 
 @pytest.fixture(scope='module', name='schema')
 def schema_fixture(datamodel: Datamodel) -> Dict[str, Any]:
-    return build_schema_metadata(datamodel)
+    return build_schema_metadata(datamodel, schema_text())
 
 
 # -- naming ------------------------------------------------------------------
@@ -152,13 +152,26 @@ def test_id_and_unique_are_not_reported_as_indexes(schema: Dict[str, Any]) -> No
 
 def test_generator_defaults(schema: Dict[str, Any]) -> None:
     fields = schema['Account']['fields']
-    assert fields['id']['default'] == {'kind': 'generator', 'name': 'cuid', 'args': []}
-    assert fields['createdAt']['default'] == {'kind': 'generator', 'name': 'now', 'args': []}
+    assert fields['id']['default'] == {'kind': 'generator', 'name': 'cuid', 'version': None, 'args': []}
+    assert fields['createdAt']['default'] == {'kind': 'generator', 'name': 'now', 'version': None, 'args': []}
     assert schema['Label']['fields']['id']['default'] == {
         'kind': 'generator',
         'name': 'autoincrement',
+        'version': None,
         'args': [],
     }
+
+
+def test_versioned_generator_names_are_split(schema: Dict[str, Any]) -> None:
+    """Prisma normalises `@default(uuid())` to `uuid(4)` on the wire.
+
+    The schema text says one thing and the DMMF another. Consumers match on the
+    generator, so the version is separated out — leaving it attached made every
+    `uuid()` schema fail to build at all, with
+    `NotImplementedError: Unhandled Prisma default generator: uuid(4)()`.
+    """
+    default = schema['Ticket']['fields']['id']['default']
+    assert default == {'kind': 'generator', 'name': 'uuid', 'version': '4', 'args': []}
 
 
 def test_literal_defaults_are_not_confused_with_generators(schema: Dict[str, Any]) -> None:

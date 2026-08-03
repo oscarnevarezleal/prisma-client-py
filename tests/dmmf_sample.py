@@ -11,8 +11,9 @@ The sample is recorded from a real `prisma generate` against
     PRISMA_PY_DEBUG_GENERATOR=1 python -m prisma generate --schema=schema.prisma
 
 then copy `src/prisma/generator/debug-params.json`, keeping only `datasources`
-and `dmmf.datamodel` — `dmmf.schema` is ~420 KB of GraphQL input types that
-nothing here reads.
+`datamodel` and `dmmf.datamodel` — `dmmf.schema` is ~420 KB of GraphQL input
+types that nothing here reads. `datamodel` is the raw schema text and must be
+kept: it is the only source of `@db.*` native types.
 """
 
 from __future__ import annotations
@@ -51,6 +52,15 @@ class _FakeData:
 
 def read_wire_sample() -> Dict[str, Any]:
     return json.loads(SAMPLE.read_text())
+
+
+def schema_text() -> str:
+    """The raw `schema.prisma` contents as Prisma sent them.
+
+    Needed for `@db.*` native types, which Prisma does not put in the DMMF at
+    all — they are only recoverable by lexing this.
+    """
+    return str(read_wire_sample()['datamodel'])
 
 
 @contextmanager

@@ -31,7 +31,14 @@ from .._schema import get_schema, get_provider, get_enum_schema
 if TYPE_CHECKING:
     import sqlalchemy as sa
 
+#: Version of the `prisma.sa` contract, independent of the client version.
+#: Both this fork and upstream report `prisma.__version__ == '0.15.0'`, so there
+#: is otherwise no way to tell them apart, or to tell which set of fixes a given
+#: checkout carries. Bump it whenever the emitted schema changes.
+__version__ = '1.1.0'
+
 __all__ = (
+    '__version__',
     'metadata',
     'table_for',
     'join_table_for',

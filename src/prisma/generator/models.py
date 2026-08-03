@@ -56,6 +56,7 @@ from .._compat import (
 )
 from .._constants import QUERY_BUILDER_ALIASES
 from ._dsl_parser import parse_schema_dsl
+from ._native_types import NativeType, parse_native_types
 
 __all__ = (
     'AnyData',
@@ -163,7 +164,65 @@ def raise_err(msg: str) -> NoReturn:
     raise TemplateError(msg)
 
 
-def build_schema_metadata(datamodel: 'Datamodel') -> Dict[str, Any]:
+#: PostgreSQL's `NAMEDATALEN - 1`. MySQL allows 64, SQL Server 128; this is the
+#: tightest of the relational providers and the one Prisma truncates against.
+MAX_IDENTIFIER_LENGTH = 63
+
+
+def truncate_identifier(base: str, suffix: str, limit: int = MAX_IDENTIFIER_LENGTH) -> str:
+    """Prisma's rule for a derived constraint name that is too long.
+
+    The suffix (`_key`, `_idx`, `_fkey`) is what makes the name recognisable, so
+    it is kept and the base is cut to fit. Verified against `prisma db push`:
+
+        document_requirements_on_documents_documentId_documentRequirementId_journeyId_key  (81)
+        -> document_requirements_on_documents_documentId_documentRequi_key                 (63)
+
+    Emitting the untruncated name does not merely diverge from Prisma —
+    SQLAlchemy raises `IdentifierError` before any SQL is sent, so it fails the
+    Alembic step outright.
+    """
+    name = f'{base}{suffix}'
+    if len(name) <= limit:
+        return name
+    return base[: limit - len(suffix)] + suffix
+
+
+def _native_type_for(field: 'Field', model_natives: Dict[str, NativeType]) -> Optional[List[Any]]:
+    native = field.native_type or model_natives.get(field.name)
+    if native is None:
+        return None
+    return [native[0], list(native[1])]
+
+
+def _sequence_for(model: 'Model', field: 'Field') -> Optional[str]:
+    """The sequence backing `@default(autoincrement())`, when it needs naming.
+
+    A primary key gets `SERIAL`, which SQLAlchemy emits from `autoincrement=True`
+    and which creates the sequence implicitly. A **non-primary-key** column does
+    not: SQLAlchemy emits a plain `integer`, the sequence is never created, and
+    because Prisma still marks the column `NOT NULL` every INSERT into that table
+    fails.
+
+    Nothing reports this. Alembic's `compare_server_default` is off by default,
+    so autogenerate produces an empty diff and the migration passes its own gate
+    while leaving a database that rejects writes. Naming the sequence here is
+    what lets the builder emit it.
+
+    Verified against `prisma db push`: the name is `<table>_<column>_seq`, and it
+    is `OWNED BY` the column.
+    """
+    default = field.default_spec
+    if not default or default.get('kind') != 'generator' or default.get('name') != 'autoincrement':
+        return None
+
+    if field.name in model.primary_key_fields:
+        return None
+
+    return truncate_identifier('_'.join([model.table_name, field.column_name]), '_seq')
+
+
+def build_schema_metadata(datamodel: 'Datamodel', schema_text: Optional[str] = None) -> Dict[str, Any]:
     """Reconstruct the physical database schema from the DMMF.
 
     The generated client has never needed this: it hands a GraphQL-ish document
@@ -175,10 +234,16 @@ def build_schema_metadata(datamodel: 'Datamodel') -> Dict[str, Any]:
     Returned as plain dicts on purpose. It is emitted into generated code as a
     literal, so it must round-trip through `repr()`, and a literal costs one
     dict construction at import rather than N object instantiations.
+
+    `schema_text` is the raw `schema.prisma` contents, needed only for `@db.*`
+    native types, which Prisma does not put on the wire. Callers that have it
+    should pass it; without it every `@db.Uuid` silently reads as `text`.
     """
     schema: Dict[str, Any] = {}
+    native_types = parse_native_types(schema_text) if schema_text else {}
 
     for model in datamodel.models:
+        model_natives = native_types.get(model.name, {})
         fields: Dict[str, Any] = {}
         relations: Dict[str, Any] = {}
 
@@ -198,9 +263,12 @@ def build_schema_metadata(datamodel: 'Datamodel') -> Dict[str, Any]:
                 'is_read_only': field.is_read_only,
                 'is_updated_at': field.is_updated_at,
                 'default': field.default_spec,
-                # see the note on `Field.native_type` — present-day Prisma does
-                # not send this, so it is None for every field today
-                'native_type': list(field.native_type) if field.native_type else None,
+                # Prisma does not send `@db.*` on the wire (verified), so this
+                # falls back to lexing the raw schema text. `Field.native_type`
+                # is checked first so a future Prisma release that does send it
+                # takes precedence automatically.
+                'native_type': _native_type_for(field, model_natives),
+                'sequence': _sequence_for(model, field),
             }
 
         indexes = []
@@ -217,7 +285,7 @@ def build_schema_metadata(datamodel: 'Datamodel') -> Dict[str, Any]:
                     # Prisma's default. Resolving it here means a schema differ
                     # compares real names instead of reporting every index as
                     # both dropped and added.
-                    'name': index.db_name or index.name or '_'.join([model.table_name, *columns, 'idx']),
+                    'name': index.db_name or index.name or truncate_identifier('_'.join([model.table_name, *columns]), '_idx'),
                     'is_named': index.db_name is not None or index.name is not None,
                     'type': index.type,
                     'algorithm': index.algorithm,
@@ -260,7 +328,7 @@ def build_schema_metadata(datamodel: 'Datamodel') -> Dict[str, Any]:
                     # needed: one addresses the constraint in a query, the other
                     # names it in the database.
                     'name': prisma_name or '_'.join(unique_fields),
-                    'db_name': index.db_name or '_'.join([model.table_name, *columns, 'key']),
+                    'db_name': index.db_name or truncate_identifier('_'.join([model.table_name, *columns]), '_key'),
                     'fields': unique_fields,
                     'columns': columns,
                     'is_defined_on_field': index.is_defined_on_field,
@@ -1334,9 +1402,13 @@ class Model(BaseModel):
             'referenced_fields': referenced_fields,
             'referenced_columns': referenced_columns,
             'fk_required': fk_required,
-            # None means "Prisma's default for this arity" (Cascade for a
-            # required relation, SetNull for an optional one) — not "no action".
+            # None means "Prisma's default for this arity" — not "no action".
             'on_delete': (fk_field.relation_on_delete if fk_field is not None else None),
+            # Always present, including on the relations where it is trivially
+            # False. The runbook tells callers to check this before traversing a
+            # relation, and a key that exists on only 2 of 640 relations makes
+            # that instruction a KeyError.
+            'join_ambiguous': False,
         }
 
         if shape == 'many-to-many':
@@ -1656,7 +1728,12 @@ class Field(BaseModel):
             args = default.args
             return {
                 'kind': 'generator',
-                'name': default.name,
+                # Prisma normalises `@default(uuid())` to `uuid(4)` on the wire —
+                # the schema text says one thing and the DMMF another. Consumers
+                # match on the generator, not the version, so strip it. Leaving
+                # it on made every `uuid()` schema fail to build at all.
+                'name': default.name.split('(', 1)[0],
+                'version': default.name[len(default.name.split('(', 1)[0]) :].strip('()') or None,
                 'args': args if isinstance(args, list) else ([] if args is None else [args]),
             }
 

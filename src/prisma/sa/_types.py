@@ -12,13 +12,14 @@ else's database, discovered during a deploy.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Callable
+from typing import Any, Dict, List, Callable, Optional
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 __all__ = (
     'SUPPORTED_PROVIDERS',
+    'native_type',
     'UnsupportedProviderError',
     'check_provider',
     'scalar_type',
@@ -77,8 +78,76 @@ _SCALARS: Dict[str, Dict[str, Callable[[], Any]]] = {
 }
 
 
-def scalar_type(provider: str, prisma_type: str) -> Any:
+# `@db.*` overrides, as created by `prisma db push`. Verified:
+#
+#   @db.Uuid             -> uuid
+#   @db.VarChar(40)      -> character varying(40)
+#   @db.Text             -> text
+#   @db.Decimal(12, 2)   -> numeric(12,2)
+#   @db.Timestamptz(6)   -> timestamp(6) with time zone
+#   @db.SmallInt         -> smallint
+#
+# Prisma does not send these on the wire at all; they are recovered by lexing the
+# raw schema text (`generator/_native_types.py`). Without them a `@db.Uuid`
+# primary key reads as `text`, and correcting that later is a table rewrite.
+_PG_NATIVE: Dict[str, Callable[..., Any]] = {
+    'Uuid': postgresql.UUID,
+    'Text': sa.Text,
+    'VarChar': lambda n=None: sa.String(int(n)) if n else sa.Text(),
+    'Char': lambda n=None: sa.CHAR(int(n)) if n else sa.CHAR(),
+    'Boolean': sa.Boolean,
+    'Bit': lambda n=None: postgresql.BIT(int(n)) if n else postgresql.BIT(),
+    'VarBit': lambda n=None: postgresql.BIT(int(n), varying=True) if n else postgresql.BIT(varying=True),
+    'SmallInt': sa.SmallInteger,
+    'Integer': sa.Integer,
+    'BigInt': sa.BigInteger,
+    'Oid': postgresql.OID,
+    'Real': sa.REAL,
+    'DoublePrecision': sa.Double,
+    'Decimal': lambda p=None, s=None: sa.Numeric(int(p), int(s)) if p is not None else sa.Numeric(),
+    'Money': postgresql.MONEY,
+    'Date': sa.Date,
+    'Time': lambda p=None: sa.Time(precision=int(p)) if p is not None else sa.Time(),
+    'Timetz': lambda p=None: sa.Time(precision=int(p), timezone=True) if p is not None else sa.Time(timezone=True),
+    'Timestamp': lambda p=None: postgresql.TIMESTAMP(precision=int(p) if p is not None else None),
+    'Timestamptz': lambda p=None: postgresql.TIMESTAMP(precision=int(p) if p is not None else None, timezone=True),
+    'ByteA': postgresql.BYTEA,
+    'Json': postgresql.JSON,
+    'JsonB': postgresql.JSONB,
+    'Inet': postgresql.INET,
+    'Xml': lambda: sa.types.NullType(),
+    'Citext': lambda: sa.Text(),
+}
+
+
+def native_type(provider: str, name: str, args: List[str]) -> Any:
+    """The column type for a `@db.*` annotation.
+
+    Unknown annotations raise rather than falling back to the default scalar
+    type: falling back is how a `@db.Uuid` becomes `text`, which is exactly the
+    failure this table exists to prevent.
+    """
     check_provider(provider)
+    try:
+        factory = _PG_NATIVE[name]
+    except KeyError:
+        raise NotImplementedError(
+            f'No {provider} mapping for the native type annotation @db.{name}.\n'
+            '  Falling back to the default type would silently change the column, so this refuses instead.\n'
+            '  Add it to prisma/sa/_types.py, checked against a real `prisma db push`.'
+        ) from None
+
+    try:
+        return factory(*args)
+    except (TypeError, ValueError) as exc:
+        raise NotImplementedError(f'Could not apply @db.{name}({", ".join(args)}): {exc}') from None
+
+
+def scalar_type(provider: str, prisma_type: str, native: Optional[List[Any]] = None) -> Any:
+    check_provider(provider)
+    if native:
+        return native_type(provider, native[0], list(native[1]))
+
     try:
         factory = _SCALARS[provider][prisma_type]
     except KeyError:
