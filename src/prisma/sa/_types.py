@@ -15,7 +15,13 @@ from __future__ import annotations
 from typing import Any, Dict, List, Callable, Optional
 
 import sqlalchemy as sa
+from sqlalchemy.types import TypeEngine
 from sqlalchemy.dialects import postgresql
+
+#: A scalar type constructor: no arguments, returns the column type.
+ScalarFactory = Callable[[], TypeEngine[Any]]
+#: A `@db.*` constructor: takes the annotation's arguments as strings.
+NativeFactory = Callable[..., TypeEngine[Any]]
 
 __all__ = (
     'SUPPORTED_PROVIDERS',
@@ -55,14 +61,22 @@ def check_provider(provider: str) -> None:
 #   Int       integer              Decimal  numeric(65,30)
 #   BigInt    bigint               DateTime timestamp(3) without time zone
 #   Float     double precision     String[] text[]  (and always NULLable)
-_POSTGRESQL: Dict[str, Callable[[], Any]] = {
+def _pg_decimal() -> TypeEngine[Any]:
+    return sa.Numeric(precision=65, scale=30)
+
+
+def _pg_datetime() -> TypeEngine[Any]:
+    return postgresql.TIMESTAMP(precision=3)
+
+
+_POSTGRESQL: Dict[str, ScalarFactory] = {
     'String': sa.Text,
     'Boolean': sa.Boolean,
     'Int': sa.Integer,
     'BigInt': sa.BigInteger,
     'Float': sa.Double,
-    'Decimal': lambda: sa.Numeric(precision=65, scale=30),
-    'DateTime': lambda: postgresql.TIMESTAMP(precision=3),
+    'Decimal': _pg_decimal,
+    'DateTime': _pg_datetime,
     'Json': postgresql.JSONB,
     'Bytes': postgresql.BYTEA,
 }
@@ -73,7 +87,7 @@ _POSTGRESQL: Dict[str, Callable[[], Any]] = {
 # three branches are unreachable rather than wrong. The structural difference
 # that stops SQLite being a one-line addition: Prisma emits uniques as `CREATE
 # UNIQUE INDEX`, not as table constraints, so `UniqueConstraint` would diff.
-_SCALARS: Dict[str, Dict[str, Callable[[], Any]]] = {
+_SCALARS: Dict[str, Dict[str, ScalarFactory]] = {
     'postgresql': _POSTGRESQL,
 }
 
@@ -90,37 +104,89 @@ _SCALARS: Dict[str, Dict[str, Callable[[], Any]]] = {
 # Prisma does not send these on the wire at all; they are recovered by lexing the
 # raw schema text (`generator/_native_types.py`). Without them a `@db.Uuid`
 # primary key reads as `text`, and correcting that later is a table rewrite.
-_PG_NATIVE: Dict[str, Callable[..., Any]] = {
+# Each takes the annotation's arguments as strings, exactly as they appear in the
+# schema, and is responsible for its own parsing. Written as functions rather
+# than lambdas because pyright runs in strict mode over this package and a lambda
+# cannot carry parameter annotations.
+def _varchar(n: Optional[str] = None) -> TypeEngine[Any]:
+    return sa.String(int(n)) if n else sa.Text()
+
+
+def _char(n: Optional[str] = None) -> TypeEngine[Any]:
+    return sa.CHAR(int(n)) if n else sa.CHAR()
+
+
+def _bit(n: Optional[str] = None) -> TypeEngine[Any]:
+    return postgresql.BIT(int(n)) if n else postgresql.BIT()
+
+
+def _varbit(n: Optional[str] = None) -> TypeEngine[Any]:
+    return postgresql.BIT(int(n), varying=True) if n else postgresql.BIT(varying=True)
+
+
+def _decimal(precision: Optional[str] = None, scale: Optional[str] = None) -> TypeEngine[Any]:
+    if precision is None:
+        return sa.Numeric()
+    return sa.Numeric(int(precision), int(scale) if scale is not None else None)
+
+
+def _time(precision: Optional[str] = None) -> TypeEngine[Any]:
+    # `sa.Time` takes no precision — `@db.Time(6)` raised TypeError before
+    # pyright caught it. The dialect type is the one that accepts it.
+    return postgresql.TIME(precision=int(precision) if precision is not None else None)
+
+
+def _timetz(precision: Optional[str] = None) -> TypeEngine[Any]:
+    return postgresql.TIME(precision=int(precision) if precision is not None else None, timezone=True)
+
+
+def _timestamp(precision: Optional[str] = None) -> TypeEngine[Any]:
+    return postgresql.TIMESTAMP(precision=int(precision) if precision is not None else None)
+
+
+def _timestamptz(precision: Optional[str] = None) -> TypeEngine[Any]:
+    return postgresql.TIMESTAMP(precision=int(precision) if precision is not None else None, timezone=True)
+
+
+def _xml() -> TypeEngine[Any]:
+    return sa.types.NullType()
+
+
+def _citext() -> TypeEngine[Any]:
+    return sa.Text()
+
+
+_PG_NATIVE: Dict[str, NativeFactory] = {
     'Uuid': postgresql.UUID,
     'Text': sa.Text,
-    'VarChar': lambda n=None: sa.String(int(n)) if n else sa.Text(),
-    'Char': lambda n=None: sa.CHAR(int(n)) if n else sa.CHAR(),
+    'VarChar': _varchar,
+    'Char': _char,
     'Boolean': sa.Boolean,
-    'Bit': lambda n=None: postgresql.BIT(int(n)) if n else postgresql.BIT(),
-    'VarBit': lambda n=None: postgresql.BIT(int(n), varying=True) if n else postgresql.BIT(varying=True),
+    'Bit': _bit,
+    'VarBit': _varbit,
     'SmallInt': sa.SmallInteger,
     'Integer': sa.Integer,
     'BigInt': sa.BigInteger,
     'Oid': postgresql.OID,
     'Real': sa.REAL,
     'DoublePrecision': sa.Double,
-    'Decimal': lambda p=None, s=None: sa.Numeric(int(p), int(s)) if p is not None else sa.Numeric(),
+    'Decimal': _decimal,
     'Money': postgresql.MONEY,
     'Date': sa.Date,
-    'Time': lambda p=None: sa.Time(precision=int(p)) if p is not None else sa.Time(),
-    'Timetz': lambda p=None: sa.Time(precision=int(p), timezone=True) if p is not None else sa.Time(timezone=True),
-    'Timestamp': lambda p=None: postgresql.TIMESTAMP(precision=int(p) if p is not None else None),
-    'Timestamptz': lambda p=None: postgresql.TIMESTAMP(precision=int(p) if p is not None else None, timezone=True),
+    'Time': _time,
+    'Timetz': _timetz,
+    'Timestamp': _timestamp,
+    'Timestamptz': _timestamptz,
     'ByteA': postgresql.BYTEA,
     'Json': postgresql.JSON,
     'JsonB': postgresql.JSONB,
     'Inet': postgresql.INET,
-    'Xml': lambda: sa.types.NullType(),
-    'Citext': lambda: sa.Text(),
+    'Xml': _xml,
+    'Citext': _citext,
 }
 
 
-def native_type(provider: str, name: str, args: List[str]) -> Any:
+def native_type(provider: str, name: str, args: List[str]) -> TypeEngine[Any]:
     """The column type for a `@db.*` annotation.
 
     Unknown annotations raise rather than falling back to the default scalar
@@ -143,7 +209,7 @@ def native_type(provider: str, name: str, args: List[str]) -> Any:
         raise NotImplementedError(f'Could not apply @db.{name}({", ".join(args)}): {exc}') from None
 
 
-def scalar_type(provider: str, prisma_type: str, native: Optional[List[Any]] = None) -> Any:
+def scalar_type(provider: str, prisma_type: str, native: Optional[List[Any]] = None) -> TypeEngine[Any]:
     check_provider(provider)
     if native:
         return native_type(provider, native[0], list(native[1]))
@@ -155,7 +221,7 @@ def scalar_type(provider: str, prisma_type: str, native: Optional[List[Any]] = N
     return factory()
 
 
-def enum_type(provider: str, name: str, labels: List[str], metadata: sa.MetaData) -> Any:
+def enum_type(provider: str, name: str, labels: List[str], metadata: sa.MetaData) -> TypeEngine[Any]:
     """The column type for an enum field.
 
     PostgreSQL gets a real enum type, created and dropped with the schema. The
@@ -166,7 +232,7 @@ def enum_type(provider: str, name: str, labels: List[str], metadata: sa.MetaData
     return postgresql.ENUM(*labels, name=name, metadata=metadata, create_type=True)
 
 
-def array_type(provider: str, inner: Any) -> Any:
+def array_type(provider: str, inner: TypeEngine[Any]) -> TypeEngine[Any]:
     """A scalar list field, e.g. `tags String[]`."""
     check_provider(provider)
     if provider != 'postgresql':  # pragma: no cover — no other verified provider allows them

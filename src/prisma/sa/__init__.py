@@ -31,6 +31,13 @@ from .._schema import get_schema, get_provider, get_enum_schema
 if TYPE_CHECKING:
     import sqlalchemy as sa
 
+    # Served at runtime by the module `__getattr__` below, so that reaching for
+    # `prisma.sa` does not import SQLAlchemy until something actually needs it.
+    # Declared here as well or a type checker cannot see the names `__all__`
+    # promises. Ruff reads that as a misplaced runtime import; it is not.
+    from ._build import build_metadata as build_metadata  # noqa: TCH004
+    from ._types import UnsupportedProviderError as UnsupportedProviderError  # noqa: TCH004
+
 #: Version of the `prisma.sa` contract, independent of the client version.
 #: Both this fork and upstream report `prisma.__version__ == '0.15.0'`, so there
 #: is otherwise no way to tell them apart, or to tell which set of fixes a given
@@ -47,7 +54,7 @@ __all__ = (
     'UnsupportedProviderError',
 )
 
-_CACHE: Optional[Any] = None
+_cache: Optional[Any] = None
 
 
 def __getattr__(name: str) -> Any:
@@ -66,14 +73,14 @@ def __getattr__(name: str) -> Any:
 
 def metadata() -> 'sa.MetaData':
     """The `MetaData` for the generated schema, built once and cached."""
-    global _CACHE
+    global _cache
 
-    if _CACHE is None:
+    if _cache is None:
         from ._build import build_metadata
 
-        _CACHE = build_metadata(get_schema(), get_enum_schema(), get_provider())
+        _cache = build_metadata(get_schema(), get_enum_schema(), get_provider())
 
-    return _CACHE
+    return _cache
 
 
 def clear_cache() -> None:
@@ -81,8 +88,8 @@ def clear_cache() -> None:
 
     Only useful in tests, and after regenerating the client in-process.
     """
-    global _CACHE
-    _CACHE = None
+    global _cache
+    _cache = None
 
 
 def table_for(model: str) -> 'sa.Table':
@@ -114,7 +121,14 @@ def join_table_for(model: str, field: str) -> 'sa.Table':
             f'{model}.{field} is a {rel["shape"]} relation; only implicit many-to-many relations have a join table'
         )
 
-    return metadata().tables[_qualified(rel['join_table'])]
+    # `.get`, not `[...]`: the join keys are only emitted for a many-to-many
+    # relation, so a missing one here means the metadata disagrees with its own
+    # `shape` — worth a clear error rather than a KeyError from deep inside.
+    join_table = rel.get('join_table')
+    if join_table is None:
+        raise LookupError(f'{model}.{field} is many-to-many but carries no join table name')
+
+    return metadata().tables[_qualified(join_table)]
 
 
 def _qualified(table: str) -> str:

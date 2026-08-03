@@ -13,7 +13,7 @@ would reject `Json` on SQLite before the generator ever ran.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import pytest
 
@@ -252,3 +252,67 @@ def test_model_with_no_primary_key() -> None:
 def test_empty_schema_builds() -> None:
     """A schema with no models is legal, if useless."""
     assert build_metadata({}, {}, 'postgresql').tables == {}
+
+
+# -- native type arguments ----------------------------------------------------
+#
+# Found by pyright, not by these tests: `sa.Time` takes no `precision`, so
+# `@db.Time(6)` raised `TypeError` at runtime. The reference schema has no
+# `@db.Time`, so nothing exercised it — the same "a fixture only tests what it
+# contains" gap that produced the original five defects. Every `@db.*` that
+# accepts arguments is now constructed here.
+
+
+#: (annotation, args, rendered). One entry per `@db.*` that takes arguments or
+#: whose rendering is not obvious; the guard below keeps this in step with the
+#: table it tests.
+NATIVE_TYPE_CASES = [
+    ('Uuid', [], 'UUID'),
+    ('Text', [], 'TEXT'),
+    ('VarChar', ['40'], 'VARCHAR(40)'),
+    ('VarChar', [], 'TEXT'),
+    ('Char', ['8'], 'CHAR(8)'),
+    ('Bit', ['3'], 'BIT(3)'),
+    ('VarBit', ['3'], 'BIT VARYING(3)'),
+    ('SmallInt', [], 'SMALLINT'),
+    ('Integer', [], 'INTEGER'),
+    ('BigInt', [], 'BIGINT'),
+    ('Real', [], 'REAL'),
+    ('DoublePrecision', [], 'DOUBLE PRECISION'),
+    ('Decimal', ['12', '2'], 'NUMERIC(12, 2)'),
+    ('Decimal', [], 'NUMERIC'),
+    ('Date', [], 'DATE'),
+    ('Time', ['6'], 'TIME(6) WITHOUT TIME ZONE'),
+    ('Time', [], 'TIME WITHOUT TIME ZONE'),
+    ('Timetz', ['6'], 'TIME(6) WITH TIME ZONE'),
+    ('Timestamp', ['3'], 'TIMESTAMP(3) WITHOUT TIME ZONE'),
+    ('Timestamptz', ['6'], 'TIMESTAMP(6) WITH TIME ZONE'),
+    ('ByteA', [], 'BYTEA'),
+    ('Json', [], 'JSON'),
+    ('JsonB', [], 'JSONB'),
+    ('Inet', [], 'INET'),
+    ('Boolean', [], 'BOOLEAN'),
+    ('Oid', [], 'OID'),
+    ('Money', [], 'MONEY'),
+    ('Citext', [], 'TEXT'),
+]
+
+
+@pytest.mark.parametrize(('annotation', 'args', 'rendered'), NATIVE_TYPE_CASES)
+def test_every_native_type_constructs(annotation: str, args: List[str], rendered: str) -> None:
+    """Constructing it is the point — an unbuildable type is a TypeError, not a diff."""
+    from sqlalchemy.dialects import postgresql
+
+    from prisma.sa._types import native_type
+
+    type_ = native_type('postgresql', annotation, args)
+    assert str(type_.compile(dialect=postgresql.dialect())) == rendered
+
+
+def test_every_mapped_native_type_is_constructed_somewhere() -> None:
+    """Adding a `@db.*` entry without a case here is how `@db.Time(6)` shipped broken."""
+    from prisma.sa._types import _PG_NATIVE
+
+    covered = {case[0] for case in NATIVE_TYPE_CASES}
+    missing = set(_PG_NATIVE) - covered
+    assert missing == {'Xml'}, f'unconstructed @db.* annotations: {sorted(missing)}'

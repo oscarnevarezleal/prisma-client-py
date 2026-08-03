@@ -114,7 +114,9 @@ class FieldSchema(TypedDict):
     sequence: Optional[str]
 
 
-class RelationSchema(TypedDict, total=False):
+class _RelationCommon(TypedDict):
+    """Keys present on every relation, whatever its shape."""
+
     to: str
     shape: RelationShape
     relation_name: str
@@ -141,15 +143,21 @@ class RelationSchema(TypedDict, total=False):
     #: is lexed from the schema text — else ``<table>_<columns>_fkey`` truncated
     #: to 63 characters the way Prisma truncates it.
     fk_name: Optional[str]
-    # many-to-many only
-    join_table: str
-    join_self_column: Optional[str]
-    join_other_column: Optional[str]
     #: set for a self-referential many-to-many, where which side is column `A`
     #: is not recoverable from the DMMF. Consumers must refuse rather than guess.
     #: Present on **every** relation, ``False`` where trivially so, so that
     #: checking it never raises.
     join_ambiguous: bool
+
+
+class RelationSchema(_RelationCommon, total=False):
+    """A relation. The join keys are present only when ``shape`` is
+    ``many-to-many``; everything inherited above is always there, so a type
+    checker does not force a guard around the common keys."""
+
+    join_table: str
+    join_self_column: Optional[str]
+    join_other_column: Optional[str]
 
 
 class ConstraintSchema(TypedDict):

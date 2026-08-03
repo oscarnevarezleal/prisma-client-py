@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Mapping, Optional
 
 import sqlalchemy as sa
+from sqlalchemy import event
 
 from ._types import enum_type, array_type, scalar_type, check_provider
 
@@ -224,7 +225,7 @@ def _own_sequences(table: sa.Table, spec: Mapping[str, Any]) -> None:
         sequence = field.get('sequence')
         if not sequence:
             continue
-        sa.event.listen(
+        event.listen(
             table,
             'after_create',
             sa.DDL(f'ALTER SEQUENCE "{sequence}" OWNED BY "{table.name}"."{field["column"]}"'),
