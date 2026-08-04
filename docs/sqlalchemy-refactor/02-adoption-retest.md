@@ -36,8 +36,9 @@ Their framing of this is the accurate one and worth repeating:
 > exercised.
 
 Fixed by moving the constraint name into the metadata, where the truncation rule
-already lived, rather than deriving it in the builder. `journey_order_instruction_geofences_journey_order_instruct_fkey`
-— their exact expected name — is now a test case.
+already lived, rather than deriving it in the builder. A foreign key whose
+derived name overflows 63 characters — the shape they reported, on a
+stand-in schema rather than theirs — is now a test case.
 
 ### B6 — `sort: Desc` dropped from indexes
 

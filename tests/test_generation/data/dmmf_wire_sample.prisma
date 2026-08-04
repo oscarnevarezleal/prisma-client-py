@@ -89,7 +89,7 @@ model Ticket {
   // integer *primary* key, so this silently lost its sequence and every INSERT
   // failed — with an empty Alembic diff, because server defaults are not
   // compared.
-  ticketNumber Int @default(autoincrement())
+  ticketNumber Int    @default(autoincrement())
   bigNumber    BigInt @default(autoincrement())
 
   // B4: an empty scalar list default. A bare `ARRAY[]` is a PostgreSQL error,
@@ -105,28 +105,28 @@ model Ticket {
   seenAt    DateTime @db.Timestamptz(6)
   priority  Int      @db.SmallInt
 
-  links     TicketRequirementsOnDocuments[]
-  geofences Geofence[]
+  links   TicketAttachmentRequirement[]
+  regions Region[]
 }
 
-// B3: the derived unique constraint name is 81 characters. PostgreSQL truncates
+// B3: the derived unique constraint name is 77 characters. PostgreSQL truncates
 // at 63 and so does Prisma; SQLAlchemy raises `IdentifierError` before emitting
 // any SQL, which fails the Alembic step outright.
-model TicketRequirementsOnDocuments {
-  documentId            String
-  documentRequirementId String
-  ticketId              String @db.Uuid
-  ticket                Ticket @relation(fields: [ticketId], references: [id])
+model TicketAttachmentRequirement {
+  attachmentId     String
+  attachmentRuleId String
+  ticketId         String @db.Uuid
+  ticket           Ticket @relation(fields: [ticketId], references: [id])
 
-  @@id([documentId, documentRequirementId])
-  @@unique([documentId, documentRequirementId, ticketId])
-  @@map("ticket_requirements_on_documents")
+  @@id([attachmentId, attachmentRuleId])
+  @@unique([attachmentId, attachmentRuleId, ticketId])
+  @@map("ticket_attachment_requirements")
 }
 
 // Three more shapes, from the retest of the fix above. All three were
 // unreachable before — B2 crashed first — and none was in this schema, which is
 // the same reason the original five got through.
-model Geofence {
+model Region {
   id String @id @default(uuid()) @db.Uuid
 
   // B7: `@relation(map:)` is absent from the DMMF, like `@db.*`. Without lexing
@@ -134,7 +134,7 @@ model Geofence {
   // invisible except where `map:` is doing something — the only reason to write
   // it. Alembic does not compare constraint names, so the gate stays quiet.
   ticketId String @map("ticket_id") @db.Uuid
-  ticket   Ticket @relation(fields: [ticketId], references: [id], map: "custom_geofence_fk")
+  ticket   Ticket @relation(fields: [ticketId], references: [id], map: "custom_region_fk")
 
   scopeId   String   @map("scope_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at")
@@ -142,25 +142,25 @@ model Geofence {
   // B6: `sort: Desc` is in the DMMF and was simply dropped. On a composite
   // index that is not cosmetic — (a ASC, b ASC) read backwards is (a DESC,
   // b DESC), which serves neither `ORDER BY a, b DESC` nor `ORDER BY a DESC, b`.
-  @@index([scopeId, createdAt(sort: Desc)], map: "idx_geofence_scope_created")
-  @@map("geofences")
+  @@index([scopeId, createdAt(sort: Desc)], map: "idx_region_scope_created")
+  @@map("regions")
 }
 
 // B3 remainder: the *foreign key* name also overflows 63 characters. The
 // original report's example was a `_key`; it became the test case and the
 // `_fkey` path was never exercised — the response's own lesson, recurring
 // inside its own fix.
-model JourneyOrderInstruction {
-  id        String                            @id @default(uuid()) @db.Uuid
-  geofences JourneyOrderInstructionGeofence[]
+model ScheduledMaintenanceWindow {
+  id      String                             @id @default(uuid()) @db.Uuid
+  regions ScheduledMaintenanceWindowRegion[]
 
-  @@map("journey_order_instruction")
+  @@map("scheduled_maintenance_window")
 }
 
-model JourneyOrderInstructionGeofence {
-  id                        String                  @id @default(uuid()) @db.Uuid
-  journeyOrderInstructionId String                  @map("journey_order_instruction_id") @db.Uuid
-  journeyOrderInstruction   JourneyOrderInstruction @relation(fields: [journeyOrderInstructionId], references: [id])
+model ScheduledMaintenanceWindowRegion {
+  id                           String                     @id @default(uuid()) @db.Uuid
+  scheduledMaintenanceWindowId String                     @map("scheduled_maintenance_window_id") @db.Uuid
+  scheduledMaintenanceWindow   ScheduledMaintenanceWindow @relation(fields: [scheduledMaintenanceWindowId], references: [id])
 
-  @@map("journey_order_instruction_geofences")
+  @@map("scheduled_maintenance_window_regions")
 }

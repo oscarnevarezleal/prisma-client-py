@@ -141,10 +141,10 @@ def test_b3_long_constraint_name_is_truncated(generated: Dict[str, Any]) -> None
     Prisma truncates and keeps the suffix; the library did not, so Phase 3 could
     not run at all.
     """
-    (unique,) = [u for u in generated['schema']['TicketRequirementsOnDocuments']['uniques'] if len(u['fields']) == 3]
+    (unique,) = [u for u in generated['schema']['TicketAttachmentRequirement']['uniques'] if len(u['fields']) == 3]
     assert len(unique['db_name']) == MAX_IDENTIFIER_LENGTH
     assert unique['db_name'].endswith('_key')
-    assert unique['db_name'].startswith('ticket_requirements_on_documents_')
+    assert unique['db_name'].startswith('ticket_attachment_requirements_')
 
 
 def test_b3_every_emitted_identifier_fits(metadata: sa.MetaData) -> None:
@@ -172,9 +172,9 @@ def test_b3_every_emitted_identifier_fits(metadata: sa.MetaData) -> None:
         # one over: the base loses a character, the suffix survives
         ('a' * 60, '_key', 'a' * 59 + '_key'),
         (
-            'document_requirements_on_documents_documentId_documentRequirementId_journeyId',
+            'attachment_rules_on_attachments_attachmentId_attachmentRuleId_scopeId',
             '_key',
-            'document_requirements_on_documents_documentId_documentRequi_key',
+            'attachment_rules_on_attachments_attachmentId_attachmentRule_key',
         ),
     ],
 )
@@ -212,7 +212,7 @@ def test_b1_native_types_are_honoured(metadata: sa.MetaData, column: str, render
 
 def test_b1_foreign_key_column_matches_the_key_it_references(metadata: sa.MetaData) -> None:
     """A `text` FK pointing at a `uuid` key does not just diff — it will not create."""
-    child = metadata.tables['ticket_requirements_on_documents'].c['ticketId']
+    child = metadata.tables['ticket_attachment_requirements'].c['ticketId']
     parent = metadata.tables['Ticket'].c['id']
     assert isinstance(child.type, postgresql.UUID)
     assert type(child.type) is type(parent.type)
@@ -237,12 +237,12 @@ def test_b3_foreign_key_names_are_truncated_too(metadata: sa.MetaData) -> None:
     """
     constraints = [
         c
-        for c in metadata.tables['journey_order_instruction_geofences'].constraints
+        for c in metadata.tables['scheduled_maintenance_window_regions'].constraints
         if isinstance(c, sa.ForeignKeyConstraint)
     ]
-    assert constraints, 'journey_order_instruction_geofences has no foreign key'
+    assert constraints, 'scheduled_maintenance_window_regions has no foreign key'
     constraint = constraints[0]
-    assert constraint.name == 'journey_order_instruction_geofences_journey_order_instruct_fkey'
+    assert constraint.name == 'scheduled_maintenance_window_regions_scheduled_maintenance_fkey'
     assert len(str(constraint.name)) == MAX_IDENTIFIER_LENGTH
 
 
@@ -264,7 +264,7 @@ def test_b6_descending_index_column_keeps_its_direction(metadata: sa.MetaData) -
     substituted by the one that would be built, and those queries fall back to a
     sort node. Silent to the application, visible later as a slow query.
     """
-    index = _index_named(metadata, 'geofences', 'idx_geofence_scope_created')
+    index = _index_named(metadata, 'regions', 'idx_region_scope_created')
     rendered = str(CreateIndex(index).compile(dialect=DIALECT))
     assert 'created_at DESC' in rendered
     assert 'scope_id, created_at DESC' in rendered
@@ -285,9 +285,9 @@ def test_b7_relation_map_names_the_constraint(metadata: sa.MetaData) -> None:
     anyone writes it — and Alembic does not compare constraint names, so the
     gate stays quiet. The same silent class as B5.
     """
-    names = {c.name for c in metadata.tables['geofences'].constraints if isinstance(c, sa.ForeignKeyConstraint)}
-    assert 'custom_geofence_fk' in names
-    assert 'geofences_ticket_id_fkey' not in names, 'derived from @@map instead of honouring map:'
+    names = {c.name for c in metadata.tables['regions'].constraints if isinstance(c, sa.ForeignKeyConstraint)}
+    assert 'custom_region_fk' in names
+    assert 'regions_ticket_id_fkey' not in names, 'derived from @@map instead of honouring map:'
 
 
 def test_b7_unmapped_relations_still_derive_their_name(metadata: sa.MetaData) -> None:
