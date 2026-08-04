@@ -513,9 +513,9 @@ bar than an empty Alembic autogenerate diff, since autogenerate ignores foreign
 key actions, constraint names, index methods, column order and CHECK constraints.
 But that is a claim about *the schemas that have been tested*. When a team ran it
 against a real 182-model application schema, the dumps were not identical: 2,191
-lines of diff, fully explained by two defects that are now fixed, plus two more
-found on the retest. The reference schema has grown ten shapes across three rounds
-of this. Run the DDL comparison against **your** schema before you trust the
+lines of diff, fully explained by two defects that are now fixed, plus three more
+found on the retest. The reference schema has grown to cover ten shapes across
+three rounds of this. Run the DDL comparison against **your** schema before you trust the
 equivalence — the runbook §3 has the command — and treat a non-empty diff as a
 finding to report, not as a mistake you made.
 
@@ -541,14 +541,16 @@ a NOT NULL foreign key, where Prisma itself raises P2014. Your decision: for
 data (it usually is, and it is usually a one-line change); for the rest, whether
 the call site should exist at all.
 
-**Atomic operations** — `{'increment': 1}`, `decrement`, `multiply`.
-`values_for_update` refuses them by name rather than writing the mapping into the
-column. These are the most common blocker in practice — a counter, a balance, a
-view count — and they are the reason a module lands in `one-blocker`. Your
-decision: `sa.update(t).values(clicks=t.c.clicks + 1)` is the obvious SQL and it
-is *not on the verified list*, so if you write it you own verifying it against
-Prisma's behaviour under concurrency yourself. That is a legitimate choice; making
-it silently is not.
+**Atomic operations** — `increment`, `decrement`, `multiply`, `divide`.
+`values_for_update` refuses a mapping outright rather than storing the mapping
+itself in the column, and the doctor names the operation it found. These are the
+ordinary counters and balances of an application — two of the three STOPs in the
+`examples/` run above are atomic operations — which is why they are a common
+reason for a module to land in `one-blocker`. Your decision:
+`sa.update(t).values(clicks=t.c.clicks + 1)` is the obvious SQL and it is *not on
+the verified list*, so if you write it you own verifying it against Prisma's
+behaviour, including under concurrency. That is a legitimate choice; making it
+silently is not.
 
 **`tx(timeout=...)`** — no equivalent exists. Prisma's query engine enforces it
 between queries with its own timer; it is neither `statement_timeout` nor
@@ -652,10 +654,12 @@ raises where Prisma returned `None`.
 
 ## The library surface
 
-Everything here is in `prisma.sa`, which requires `schemaMetadata = true` on the
-generator block and PostgreSQL. `sa.__version__` is the contract version of this
-package, independent of the client version — it is also the only way to tell this
-fork from upstream, which reports the same `prisma.__version__`.
+Everything here is in `prisma.sa`, which needs `prisma[sqlalchemy]` installed
+(SQLAlchemy 2.0 or later), `schemaMetadata = true` on the generator block, and
+PostgreSQL. `sa.__version__` is the contract version of this package, independent
+of the client version — it is also the only way to tell this fork from upstream,
+which reports the same `prisma.__version__`. Importing `prisma` does not import
+SQLAlchemy; `prisma.sa` defers it until something actually needs it.
 
 | | what it gives you |
 | --- | --- |
