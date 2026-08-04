@@ -406,6 +406,11 @@ def main() -> None:
         try:
             right = normalize(alchemy_call())
         except Exception as exc:  # noqa: BLE001
+            # `conn` is shared by every case. A failed statement leaves psycopg's
+            # transaction aborted, so without this the *next* case fails with a
+            # transaction-state error instead of its own result — and a harness
+            # that is the source of truth for §4.1 would report that as fact.
+            conn.rollback()
             results[name] = f'SA-ERROR {type(exc).__name__}: {exc}'
             continue
 

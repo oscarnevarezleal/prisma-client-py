@@ -579,12 +579,17 @@ def main() -> None:
         try:
             left = run_pass(conn, setup, prisma_call, observe)
         except Exception as exc:  # noqa: BLE001
+            # before `teardown`, not after: it executes DELETEs, and on a
+            # connection whose transaction is aborted those raise too, which
+            # would replace the recorded failure with a crash of the whole run
+            conn.rollback()
             teardown(conn)
             results[name] = f'PRISMA-ERROR {type(exc).__name__}: {exc}'
             continue
         try:
             right = run_pass(conn, setup, alchemy_call, observe)
         except Exception as exc:  # noqa: BLE001
+            conn.rollback()
             teardown(conn)
             results[name] = f'SA-ERROR {type(exc).__name__}: {exc}'
             continue
