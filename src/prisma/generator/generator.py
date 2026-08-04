@@ -24,7 +24,7 @@ from ..utils import DEBUG, DEBUG_GENERATOR
 from .errors import PartialTypeGeneratorError
 from .models import PythonData, DefaultData
 from .._types import BaseModelT, InheritsGeneric, get_args
-from .filters import quote
+from .filters import quote, unquote_forward_refs
 from .jsonrpc import Manifest
 from .._compat import model_json, model_parse, cached_property
 
@@ -59,6 +59,7 @@ DEFAULT_ENV = Environment(
 # and Pyright infers the type from the default builtin filters which
 # results in an overly restrictive type
 DEFAULT_ENV.filters['quote'] = quote  # pyright: ignore
+DEFAULT_ENV.filters['unquote_forward_refs'] = unquote_forward_refs  # pyright: ignore
 
 partial_models_ctx: ContextVar[List[PartialModel]] = ContextVar('partial_models_ctx', default=[])
 

@@ -66,12 +66,16 @@ def test_partial_types_msgspec(testdir: Testdir) -> None:
     """Partial types are generated as msgspec structs and behave like the pydantic ones"""
 
     def tests() -> None:  # mark: filedef
+        import ast
         import datetime
+        from pathlib import Path
 
         import pytest
         import msgspec
         import pydantic
 
+        import prisma.models
+        import prisma.partials
         from prisma import Base64, models
         from prisma._compat import model_parse
         from prisma.partials import (  # type: ignore[attr-defined]
@@ -295,6 +299,43 @@ def test_partial_types_msgspec(testdir: Testdir) -> None:
             assert type(actions).__name__ == 'PostActions'
             assert UserOnlyName.prisma(client)._model is UserOnlyName
 
+        def test_annotations_carry_no_nested_forward_refs() -> None:
+            """Struct annotations must contain no quoted forward references.
+
+            Python 3.8's `typing.ForwardRef._evaluate` does not recurse into the
+            type it evaluates (3.9 added that), and msgspec hands it the whole
+            annotation as one forward reference because of `from __future__
+            import annotations`. A *nested* string literal therefore survives as
+            an unresolved `ForwardRef` and msgspec rejects it with
+            `TypeError: Type 'ForwardRef(...)' is not supported`.
+
+            Nothing on 3.9+ can observe that at runtime, so the invariant is
+            checked statically here — otherwise only the 3.8 CI job would catch
+            a regression.
+            """
+            for module in (prisma.models, prisma.partials):
+                path = module.__file__
+                assert path is not None
+                for node in ast.walk(ast.parse(Path(path).read_text())):
+                    if not isinstance(node, ast.ClassDef):
+                        continue
+
+                    # only direct class-body annotations are struct fields;
+                    # annotations inside methods are never evaluated by msgspec
+                    for stmt in node.body:
+                        if not isinstance(stmt, ast.AnnAssign):
+                            continue
+
+                        quoted = [
+                            sub.value
+                            for sub in ast.walk(stmt.annotation)
+                            if isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+                        ]
+                        assert not quoted, (
+                            f'{module.__name__}.{node.name} line {stmt.lineno}: '
+                            f'annotation contains quoted forward reference(s) {quoted}'
+                        )
+
     def generator() -> None:  # mark: filedef
         from prisma.models import Post, User
 
@@ -324,7 +365,7 @@ def test_partial_types_msgspec(testdir: Testdir) -> None:
     testdir.make_from_function(generator, name='prisma/partial_types.py')
     testdir.generate(SCHEMA, 'partial_type_generator = "prisma/partial_types.py"')
     testdir.make_from_function(tests)
-    testdir.runpytest().assert_outcomes(passed=12)
+    testdir.runpytest().assert_outcomes(passed=13)
 
 
 @pytest.mark.parametrize('argument', ['exclude', 'include', 'required', 'optional'])

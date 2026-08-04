@@ -52,11 +52,16 @@ class {{ model.name }}(PrismaRecord, kw_only=True):
         {% endfor %}
     }
 
+    {# annotations are written unquoted: under `from __future__ import
+       annotations` msgspec evaluates the whole annotation as one forward
+       reference, and on Python 3.8 a nested string literal inside it is left
+       unresolved (see `filters.unquote_forward_refs`). Resolution is lazy, so
+       naming a model defined further down this module is still fine. #}
     {% for field in model.all_fields %}
     {% if field.is_required and not field.relation_name %}
-    {{ field.name }}: {{ field.python_type }}
+    {{ field.name }}: {{ field.python_type | unquote_forward_refs }}
     {% else %}
-    {{ field.name }}: Optional[{{ field.python_type }}] = None
+    {{ field.name }}: Optional[{{ field.python_type | unquote_forward_refs }}] = None
     {% endif %}
     {% endfor %}
 

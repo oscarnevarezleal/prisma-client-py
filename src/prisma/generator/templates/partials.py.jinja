@@ -57,11 +57,13 @@ class {{ partial.name }}(PrismaRecord, kw_only=True):
         {% endfor %}
     }
 
+    {# unquoted for the same reason as in models.py.jinja — see
+       `filters.unquote_forward_refs` #}
     {% for field in partial.fields.values() %}
     {% if field.optional %}
-    {{ field.name }}: Optional[{{ field.type }}] = None
+    {{ field.name }}: Optional[{{ field.type | unquote_forward_refs }}] = None
     {% else %}
-    {{ field.name }}: {{ field.type }}
+    {{ field.name }}: {{ field.type | unquote_forward_refs }}
     {% endif %}
     {% if not field.documentation is none %}
     """{{ format_documentation(field.documentation) }}"""
