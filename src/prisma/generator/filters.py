@@ -28,6 +28,10 @@ def unquote_forward_refs(type_: str) -> str:
 
     The generated type expressions use quotes only as forward-reference
     delimiters, never as part of a value (there are no `Literal['...']` types
-    among them), so a plain strip is sufficient.
+    among them), so a plain strip is sufficient. That assumption is asserted
+    rather than left implicit: a `Literal` reaching here would be silently
+    turned into a name lookup, and the failure would surface far away, as a
+    `NameError` on first decode.
     """
+    assert 'Literal[' not in type_, f'cannot unquote a type containing a string value: {type_}'
     return type_.replace("'", '')
