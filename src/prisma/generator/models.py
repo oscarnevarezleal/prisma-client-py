@@ -14,6 +14,7 @@ from typing import (
     Tuple,
     Union,
     Generic,
+    Mapping,
     TypeVar,
     ClassVar,
     Iterable,
@@ -441,6 +442,37 @@ def format_documentation(doc: str, indent: int = 4) -> str:
     )
 
 
+def partial_slim_spec(from_model: str, field: Mapping[str, Any]) -> str:
+    """Conversion spec literal for a partial model field (`modelBackend = "msgspec"`).
+
+    The spec is derived from the field on the source model so that scalar tags
+    stay exact — the python type string a `PartialModelField` carries cannot
+    distinguish e.g. `Int` from `BigInt`, both of which render as `_int`. The
+    partial's own metadata then takes over for optionality and for relations
+    that `create_partial(relations=...)` retargeted at another partial type.
+    """
+    models = [model for model in get_datamodel().models if model.name == from_model]
+    assert len(models) == 1, f'Could not find the {from_model} model'
+
+    infos = {info.name: info for info in models[0].all_fields}
+    name = field['name']
+    assert name in infos, f'Could not find the {from_model}.{name} field'
+
+    spec = infos[name].slim_base_spec()
+    if field['is_relational']:
+        # a retargeted relation is rendered as `'partials.Foo'` or
+        # `List['partials.Foo']`; an untouched one as `models.Foo` /
+        # `List['models.Foo']`. Either way the type name is the trailing
+        # dotted segment, stripped of the quoting the renderer adds.
+        spec = ('model', field['type'].rsplit('.', 1)[-1].rstrip("']"))
+
+    if field['is_list']:
+        spec = ('list', spec)
+    if field['optional']:
+        spec = ('opt', spec)
+    return repr(spec)
+
+
 def max_relation_chain_depth(models: List['Model']) -> int:
     """Longest simple path through the relation graph (distinct models linked by
     relations). This is how deep Pydantic recurses building a model's validator,
@@ -659,6 +691,7 @@ class GenericData(GenericModel, Generic[ConfigT]):
             format_documentation,
             model_dict,
             as_literal,
+            partial_slim_spec,
             build_schema_metadata,
             build_enum_metadata,
         ]:
@@ -1616,25 +1649,30 @@ class Field(BaseModel):
         'Decimal': 'decimal',
     }
 
-    def slim_spec(self) -> str:
-        """Conversion spec literal for the slim model backend.
+    def slim_spec_value(self) -> object:
+        """Conversion spec for the slim model backend.
 
         Nested tuples consumed by `prisma._fastparse.converter_for_spec`,
         e.g. `('opt', ('list', ('model', 'Post')))`.
         """
-        spec: object
-        if self.kind == 'object':
-            spec = ('model', self.type)
-        elif self.kind == 'enum':
-            spec = 'enum'
-        else:
-            spec = self._SLIM_SCALAR_TAGS[self.type]
-
+        spec = self.slim_base_spec()
         if self.is_list:
             spec = ('list', spec)
         if not self.is_required or self.relation_name is not None:
             spec = ('opt', spec)
-        return repr(spec)
+        return spec
+
+    def slim_base_spec(self) -> object:
+        """The spec for this field with no `opt` / `list` wrappers applied."""
+        if self.kind == 'object':
+            return ('model', self.type)
+        if self.kind == 'enum':
+            return 'enum'
+        return self._SLIM_SCALAR_TAGS[self.type]
+
+    def slim_spec(self) -> str:
+        """`slim_spec_value()` rendered as a literal for the templates."""
+        return repr(self.slim_spec_value())
 
     @property
     def python_type_as_string(self) -> str:

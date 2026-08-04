@@ -130,7 +130,12 @@ class PrismaRecord(msgspec.Struct, kw_only=True):
         actions = importlib.import_module(f'{package}.actions')
         if client is None:
             client = importlib.import_module(f'{package}.client').get_client()
-        return getattr(actions, f'{cls.__name__}Actions')(client, cls)
+        # keyed off the *record* name rather than the class name so that partial
+        # types — whose class name is the partial's, e.g. `PostOnlyId` — reach
+        # their model's actions, exactly as the pydantic backend does through
+        # `bases.BasePost.prisma()`
+        record = getattr(cls, '__prisma_model__', cls.__name__)
+        return getattr(actions, f'{record}Actions')(client, cls)
 
     # -- pydantic-shaped surface ------------------------------------------ #
     def model_dump(self, *, exclude_none: bool = False) -> Dict[str, Any]:

@@ -98,8 +98,10 @@ pydantic-shaped surface most code relies on (`model_dump()`, `dict()`, `json()`,
 keyword construction, `Model.prisma()`), but **convert trusted engine data
 rather than validating arbitrary input** — keep the default backend where you
 feed untrusted data into models, or validate at the boundary. Not supported on
-either: `create_partial()`, subclass field overrides, the mypy plugin's model
-checks.
+either: subclass field overrides, the mypy plugin's model checks.
+`partialTypeGenerator` / `create_partial()` works on `"msgspec"` (the generated
+partials are structs too, with the same surface as the records) but not yet on
+`"slim"`.
 
 **`"msgspec"` — recommended alternative.** Generates
 [msgspec](https://jcristharif.com/msgspec/) `Struct` records decoded in C.
@@ -113,6 +115,12 @@ relation references must resolve against a single module — cheap, since struct
 compile no per-model schemas). Records additionally offer `to_pydantic()`,
 returning a real `pydantic.BaseModel` (lazily built, cached twin class) for
 integrations that require one, e.g. FastAPI `response_model`.
+
+Known limitation: a populated `Json` column does not decode on this backend
+(msgspec requires the decode hook to return an instance of the annotated type,
+while the hook returns the plain decoded python object the pydantic backend
+produces). `Json` columns that are `NULL` are fine. This affects records and
+partial types alike.
 
 ```prisma
 generator client {

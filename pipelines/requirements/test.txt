@@ -9,6 +9,10 @@
 # the driver behind `postgresql+psycopg://`, which the tests that execute against
 # a real database use; without it they error at fixture setup rather than skip
 -r deps/psycopg.txt
+# `modelBackend = "msgspec"` is an optional runtime extra, but
+# tests/test_generation/test_partial_types_msgspec.py generates a client that
+# uses it — without this the generation fails instead of running
+-r deps/msgspec.txt
 pytest-sugar
 mock==5.1.0
 pytest-subprocess==1.5.2
