@@ -335,10 +335,11 @@ def build_schema_metadata(datamodel: 'Datamodel', schema_text: Optional[str] = N
             # The Prisma-level identifier, i.e. the key in `where={...}`. A
             # compound unique gets it from `uniqueIndexes`; a field-level one is
             # addressed by the field name itself.
-            prisma_name = next(
-                (unique.name for unique in model.unique_indexes if set(unique.fields) == set(unique_fields)),
-                None,
-            )
+            # compared in order: `@@unique([a, b])` and `@@unique([b, a])` are two
+            # different constraints with two different `where` keys, and matching
+            # on the unordered set can hand back the other one's identifier
+            matching = [unique.name for unique in model.unique_indexes if list(unique.fields) == unique_fields]
+            prisma_name = matching[0] if matching else None
             uniques.append(
                 {
                     # `name` and `db_name` are unrelated namespaces and both are
