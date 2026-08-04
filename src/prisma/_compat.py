@@ -242,6 +242,19 @@ def model_copy(model: _ModelT, deep: bool = False) -> _ModelT:
     return model.copy(deep=deep)  # pyright: ignore[reportDeprecated]
 
 
+def model_construct(model: type[_ModelT], **values: Any) -> _ModelT:
+    """Build an instance without running validation.
+
+    Pydantic v1 spells this `construct`. Callers here are converting data that
+    is already typed — engine responses, or msgspec structs being mirrored into
+    a pydantic twin — so there is nothing left for validation to establish.
+    """
+    if PYDANTIC_V2:
+        return model.model_construct(**values)
+
+    return model.construct(**values)  # pyright: ignore[reportDeprecated]
+
+
 def model_json(
     model: BaseModel,
     *,

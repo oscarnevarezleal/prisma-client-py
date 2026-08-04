@@ -173,6 +173,8 @@ class PrismaRecord(msgspec.Struct, kw_only=True):
         that require real pydantic objects. The twin model class is created
         lazily and cached; relation fields are typed ``Any`` and carried as
         nested twins."""
+        from ._compat import model_construct
+
         twin = _pydantic_twin(type(self))
         values: Dict[str, Any] = {}
         for name in self.__struct_fields__:
@@ -182,7 +184,9 @@ class PrismaRecord(msgspec.Struct, kw_only=True):
             elif isinstance(value, list):
                 value = [item.to_pydantic() if isinstance(item, PrismaRecord) else item for item in value]
             values[name] = value
-        return twin.model_construct(**values)
+        # `model_construct` is Pydantic v2's spelling; v1 calls it `construct`,
+        # and this fork still supports both
+        return model_construct(twin, **values)
 
 
 def _pydantic_twin(cls: type) -> Any:
