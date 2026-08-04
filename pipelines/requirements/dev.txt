@@ -3,6 +3,13 @@
 -r deps/lark.txt
 
 nox==2024.4.15
+# argcomplete is nox's own dependency and is otherwise unpinned. 3.7.1 added
+# `choices: Final[Mapping[str, str | bytes]]` to a module with no
+# `from __future__ import annotations`, so it is evaluated at class-definition
+# time and raises `TypeError: unsupported operand type(s) for |` on anything
+# below 3.10 — while its metadata still claims `>=3.8`. That takes `import nox`
+# down before any session runs, which is what broke `typesafety (3.9)`.
+argcomplete<3.7.1
 wheel==0.44.0
 pre-commit==2.21.0
 twine==5.1.1
