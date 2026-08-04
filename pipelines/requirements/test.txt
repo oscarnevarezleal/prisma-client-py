@@ -13,6 +13,11 @@
 # tests/test_generation/test_partial_types_msgspec.py generates a client that
 # uses it — without this the generation fails instead of running
 -r deps/msgspec.txt
+# the declarative/alembic emitters assert that the source they generate passes
+# `ruff` and `mypy --strict` — users paste that source into their own projects,
+# so the guarantee has to hold in CI and not only on a maintainer's machine
+-r deps/ruff.txt
+-r deps/mypy.txt
 pytest-sugar
 mock==5.1.0
 pytest-subprocess==1.5.2
