@@ -111,7 +111,10 @@ class UnsupportedShapeError(NotImplementedError):
     """Raised by `build_declarative(strict=True)` when anything was refused."""
 
     def __init__(self, refusals: Sequence[Refusal]) -> None:
-        self.refusals = tuple(refusals)
+        # annotated rather than inferred: this class is exported from
+        # `prisma.sa`, so `pyright --verifytypes` holds the attribute to the
+        # same standard as any other part of the public interface
+        self.refusals: Tuple[Refusal, ...] = tuple(refusals)
         details = '\n'.join(f'  - {refusal.describe()}' for refusal in self.refusals)
         super().__init__(
             'These schema shapes cannot be expressed as declarative models without\n'
