@@ -157,6 +157,54 @@ model ScheduledMaintenanceWindow {
   @@map("scheduled_maintenance_window")
 }
 
+// B8: `onUpdate:` is in the schema language and absent from the DMMF, exactly
+// like `@db.*` (B1) and `@relation(map:)` (B7). A field written
+// `@relation(..., onUpdate: Restrict, onDelete: Cascade)` arrives carrying
+// `relationOnDelete: 'Cascade'` and **no** `relationOnUpdate` key at all, so the
+// emitter hardcoded CASCADE — right by default and wrong whenever a schema says
+// otherwise, which `pg_dump` is the only gate here that would notice. Nothing
+// above declares one, which is the whole reason it went unseen: a fixture only
+// tests what it contains.
+model MaintenanceLockHolder {
+  id String @id @default(uuid()) @db.Uuid
+
+  restricted MaintenanceLock[] @relation("restrictedLock")
+  inert      MaintenanceLock[] @relation("inertLock")
+  nulled     MaintenanceLock[] @relation("nulledLock")
+  defaulted  MaintenanceLock[] @relation("defaultedLock")
+  plain      MaintenanceLock[] @relation("plainLock")
+
+  @@map("maintenance_lock_holders")
+}
+
+model MaintenanceLock {
+  id String @id @default(uuid()) @db.Uuid
+
+  // the reported shape: a declared `onUpdate` alongside a declared `onDelete`
+  restrictedId String                @map("restricted_id") @db.Uuid
+  restricted   MaintenanceLockHolder @relation("restrictedLock", fields: [restrictedId], references: [id], onUpdate: Restrict, onDelete: Cascade)
+
+  // `onUpdate` alone — `onDelete` still has to fall back to Prisma's default for
+  // the arity, so reading one from the other is not available
+  inertId String                @map("inert_id") @db.Uuid
+  inert   MaintenanceLockHolder @relation("inertLock", fields: [inertId], references: [id], onUpdate: NoAction)
+
+  // optional, with `onUpdate:` sitting *after* `map:` in the argument list: the
+  // two lexed attributes have to coexist and neither may depend on the order
+  nulledId String?                @map("nulled_id") @db.Uuid
+  nulled   MaintenanceLockHolder? @relation("nulledLock", fields: [nulledId], references: [id], map: "maintenance_lock_nulled_fk", onUpdate: SetNull)
+
+  // `SetDefault` is only legal where the column has a default to fall back to
+  defaultedId String                @default("00000000-0000-0000-0000-000000000000") @map("defaulted_id") @db.Uuid
+  defaulted   MaintenanceLockHolder @relation("defaultedLock", fields: [defaultedId], references: [id], onUpdate: SetDefault)
+
+  // no `onUpdate` at all, so the lexer must not smear the four above onto it
+  plainId String                @map("plain_id") @db.Uuid
+  plain   MaintenanceLockHolder @relation("plainLock", fields: [plainId], references: [id])
+
+  @@map("maintenance_locks")
+}
+
 model ScheduledMaintenanceWindowRegion {
   id                           String                     @id @default(uuid()) @db.Uuid
   scheduledMaintenanceWindowId String                     @map("scheduled_maintenance_window_id") @db.Uuid

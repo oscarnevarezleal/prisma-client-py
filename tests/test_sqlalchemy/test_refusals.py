@@ -183,6 +183,7 @@ def relation(**overrides: Any) -> Dict[str, Any]:
         'referenced_columns': ['id'],
         'fk_required': False,
         'on_delete': None,
+        'on_update': None,
         'fk_name': 'Thing_parentId_fkey',
         'join_ambiguous': False,
     }
@@ -231,6 +232,57 @@ def test_undeclared_action_depends_on_nullability() -> None:
 
     assert ondelete(optional) == 'SET NULL'
     assert ondelete(required) == 'RESTRICT'
+
+
+def only_fk(built: Any) -> Any:
+    (constraint,) = [c for c in built.tables['Thing'].constraints if isinstance(c, sa.ForeignKeyConstraint)]
+    return constraint
+
+
+@pytest.mark.parametrize(
+    ('declared', 'expected'),
+    [
+        ('Cascade', 'CASCADE'),
+        ('Restrict', 'RESTRICT'),
+        ('NoAction', 'NO ACTION'),
+        ('SetNull', 'SET NULL'),
+        ('SetDefault', 'SET DEFAULT'),
+    ],
+)
+def test_every_prisma_referential_action_is_mapped_for_on_update(declared: str, expected: str) -> None:
+    built = build_metadata(self_relation_schema(on_update=declared), {}, 'postgresql')
+    assert only_fk(built).onupdate == expected
+
+
+def test_unknown_on_update_action_refuses() -> None:
+    with pytest.raises(NotImplementedError, match='Obliterate'):
+        build_metadata(self_relation_schema(on_update='Obliterate'), {}, 'postgresql')
+
+
+def test_undeclared_on_update_does_not_depend_on_nullability() -> None:
+    """Deliberately unlike `on_delete`: Prisma's `onUpdate` default is Cascade throughout.
+
+    Which is exactly why hardcoding CASCADE survived — it is the right answer
+    everywhere except the schemas that say otherwise.
+    """
+    optional = build_metadata(self_relation_schema(fk_required=False), {}, 'postgresql')
+    required = build_metadata(self_relation_schema(fk_required=True), {}, 'postgresql')
+
+    assert only_fk(optional).onupdate == 'CASCADE'
+    assert only_fk(required).onupdate == 'CASCADE'
+
+
+def test_metadata_without_on_update_still_builds() -> None:
+    """A client generated before `on_update` existed has no such key.
+
+    Retro-compatibility: the whole point of `None` meaning "Prisma's default" is
+    that a missing key means the same thing, so an older `metadata.SCHEMA` keeps
+    building — and keeps producing the DDL it produced before.
+    """
+    schema = self_relation_schema()
+    del schema['Thing']['relations']['parent']['on_update']
+
+    assert only_fk(build_metadata(schema, {}, 'postgresql')).onupdate == 'CASCADE'
 
 
 # -- schemas the builder should handle without special-casing ------------------

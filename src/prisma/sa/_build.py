@@ -354,7 +354,7 @@ def _add_foreign_keys(
                 [f'{target["table"]}.{column}' for column in relation['referenced_columns']],
                 name=relation['fk_name'],
                 ondelete=_on_delete(relation),
-                onupdate='CASCADE',
+                onupdate=_on_update(relation),
             )
         )
 
@@ -370,6 +370,31 @@ def _on_delete(relation: Mapping[str, Any]) -> str:
     if declared is None:
         return 'RESTRICT' if relation['fk_required'] else 'SET NULL'
 
+    return _referential_action(declared)
+
+
+def _on_update(relation: Mapping[str, Any]) -> str:
+    """The same, for `ON UPDATE`, where the default does *not* vary by arity.
+
+    Verified against `prisma db push`: an undeclared `onUpdate` is `CASCADE` for
+    a mandatory relation and for an optional one alike. That is what made
+    hardcoding `CASCADE` here look right — and it is right, up until a schema
+    declares something else, which Prisma honours and which nothing downstream
+    could see, because `relationOnUpdate` is not in the DMMF at all. The declared
+    action is lexed out of the raw schema text instead.
+
+    `.get` rather than `[...]`: a client generated before `on_update` existed
+    carries no such key, and its absence means exactly what a declared `None`
+    means.
+    """
+    declared = relation.get('on_update')
+    if declared is None:
+        return 'CASCADE'
+
+    return _referential_action(declared)
+
+
+def _referential_action(declared: str) -> str:
     try:
         return _REFERENTIAL_ACTIONS[declared]
     except KeyError:
@@ -396,6 +421,16 @@ def _build_join_table(
     left = schema[left_model]
     right = schema[right_model]
 
+    # Prisma owns both of the join table's foreign keys and rejects a schema that
+    # tries to say otherwise — "Referential actions on implicit many-to-many
+    # relations are not supported", verified against 5.19 — so `on_update` is
+    # necessarily absent here and this resolves to Prisma's default, CASCADE. It
+    # is still read through the same helper so the two can never drift apart.
+    # `ondelete` is *not*: `_on_delete` keys off `fk_required`, which no side of
+    # an implicit m2m carries, and would answer SET NULL for columns Prisma
+    # creates NOT NULL.
+    on_update = _on_update(relation)
+
     table = sa.Table(
         name,
         md,
@@ -406,14 +441,14 @@ def _build_join_table(
             [f'{left["table"]}.{left["primary_key"]["columns"][0]}'],
             name=f'{name}_{JOIN_LEFT}_fkey',
             ondelete='CASCADE',
-            onupdate='CASCADE',
+            onupdate=on_update,
         ),
         sa.ForeignKeyConstraint(
             [JOIN_RIGHT],
             [f'{right["table"]}.{right["primary_key"]["columns"][0]}'],
             name=f'{name}_{JOIN_RIGHT}_fkey',
             ondelete='CASCADE',
-            onupdate='CASCADE',
+            onupdate=on_update,
         ),
     )
 

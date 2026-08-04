@@ -138,6 +138,12 @@ class _RelationCommon(TypedDict):
     #: ``None`` means "Prisma's default for this arity" — Restrict when required,
     #: SetNull when optional — not "no action"
     on_delete: Optional[str]
+    #: ``@relation(onUpdate:)``. Prisma does not send this in the DMMF either, so
+    #: it is lexed from the schema text. ``None`` means "Prisma's default", which
+    #: for ``onUpdate`` is Cascade at every arity — not "no action", and not a
+    #: licence to hardcode CASCADE, because a schema that declares otherwise then
+    #: gets the wrong ``ON UPDATE`` silently.
+    on_update: Optional[str]
     #: The foreign key constraint name, on the owning side; ``None`` otherwise.
     #: ``@relation(map:)`` when set — Prisma does not send that in the DMMF, so it
     #: is lexed from the schema text — else ``<table>_<columns>_fkey`` truncated

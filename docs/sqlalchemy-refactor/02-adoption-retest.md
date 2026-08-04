@@ -82,13 +82,21 @@ extended specifically to stop this. That is the point: extending the fixture
 *reactively*, one report at a time, converges slowly. Each round finds the
 shapes the previous round did not think of.
 
-The reference schema now covers ten shapes across three rounds:
+The reference schema now covers eleven shapes across four rounds:
 
 | round | shapes added |
 | --- | --- |
 | initial | `@@map`, `@map`, compound `@@id`, four relation shapes, enums with `@map`, self-referential m2m |
 | 1.1.0 | `uuid()` → `uuid(4)`, non-PK `autoincrement()`, `@db.*`, long `_key`, empty list default |
 | 1.2.0 | long `_fkey`, `sort: Desc`, `@relation(map:)` |
+| 1.3.0 | `@relation(onUpdate:)`, in all four non-default actions |
+
+The fourth round was found here rather than reported, and it is the same shape
+for the fourth time: `onUpdate` is in the schema language, absent from the DMMF,
+and the reference schema declared none — so the emitter's hardcoded
+`ON UPDATE CASCADE` matched the `pg_dump` gate exactly, on every relation it
+contained. A fixture only tests what it contains, and a gate is only as strong
+as the fixture behind it.
 
 ### On their offer
 

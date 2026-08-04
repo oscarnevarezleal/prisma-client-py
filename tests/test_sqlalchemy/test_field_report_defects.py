@@ -9,14 +9,18 @@ B6, B7 and the B3 remainder came from the **retest** of the fix: three more
 shapes the reference schema did not contain, found the same way — by running a
 real schema against a real database.
 
+B8 was not reported. It was found by writing a schema the reference schema had
+no equivalent of, which is the only way any of these get found.
+
 The reference schema in `data/dmmf_wire_sample.prisma` now carries all of them,
 so `test_ddl_equivalence.py` covers them against a real `prisma db push` too.
 These name them individually so a failure says which defect came back rather
 than just that some DDL moved.
 
-The root cause was the same for all five: the reference schema exercised none of
+The root cause was the same every time: the reference schema exercised none of
 these shapes. It was recorded from the pinned CLI, so the DMMF was real — but a
-fixture only tests what it contains.
+fixture only tests what it contains, and a gate is only as strong as the fixture
+behind it.
 """
 
 from __future__ import annotations
@@ -294,3 +298,51 @@ def test_b7_unmapped_relations_still_derive_their_name(metadata: sa.MetaData) ->
     """The lexer must not attach a name to the wrong relation."""
     names = {c.name for c in metadata.tables['Entry'].constraints if isinstance(c, sa.ForeignKeyConstraint)}
     assert names == {'Entry_accountId_fkey', 'Entry_parentId_fkey'}
+
+
+# -- B8: `@relation(onUpdate:)` hardcoded to CASCADE --------------------------
+
+
+def _foreign_keys(metadata: sa.MetaData, table: str) -> Dict[str, sa.ForeignKeyConstraint]:
+    return {str(c.name): c for c in metadata.tables[table].constraints if isinstance(c, sa.ForeignKeyConstraint)}
+
+
+def test_b8_declared_on_update_is_emitted(metadata: sa.MetaData) -> None:
+    """The third annotation in the schema language that the DMMF simply drops.
+
+    `@relation(..., onUpdate: Restrict, onDelete: Cascade)` arrives carrying
+    `relationOnDelete: 'Cascade'` and **no** `relationOnUpdate` key at all, so
+    the emitter wrote `ON UPDATE CASCADE` on every foreign key. Prisma's default
+    really is Cascade, which is what made it look correct — and made it wrong
+    only on the schemas that bothered to say otherwise.
+
+    Alembic's autogenerate does not compare referential actions, so nothing but
+    a `pg_dump` diff would ever have said so.
+    """
+    actions = {name: fk.onupdate for name, fk in _foreign_keys(metadata, 'maintenance_locks').items()}
+    assert actions == {
+        'maintenance_locks_restricted_id_fkey': 'RESTRICT',
+        'maintenance_locks_inert_id_fkey': 'NO ACTION',
+        'maintenance_lock_nulled_fk': 'SET NULL',
+        'maintenance_locks_defaulted_id_fkey': 'SET DEFAULT',
+        'maintenance_locks_plain_id_fkey': 'CASCADE',
+    }
+
+
+def test_b8_undeclared_relations_keep_prismas_default(metadata: sa.MetaData) -> None:
+    """The lexer must not attach an action to the wrong relation.
+
+    Same failure mode as B1 and B7: a per-model, per-field walk that smears one
+    field's annotation across its neighbours passes the interesting case and
+    breaks every other one.
+    """
+    for table in ('Entry', 'Profile', 'regions', '_EntryToLabel'):
+        for name, fk in _foreign_keys(metadata, table).items():
+            assert fk.onupdate == 'CASCADE', name
+
+
+def test_b8_on_update_survives_alongside_relation_map(metadata: sa.MetaData) -> None:
+    """Both lexed `@relation` arguments on one field, in the order `map:` first."""
+    nulled = _foreign_keys(metadata, 'maintenance_locks')['maintenance_lock_nulled_fk']
+    assert nulled.onupdate == 'SET NULL'
+    assert nulled.ondelete == 'SET NULL'  # optional relation, undeclared onDelete

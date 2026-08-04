@@ -548,13 +548,15 @@ wrong, so the code raises or flags instead:
 | --- | --- | --- |
 | self-referential implicit m2m | which side is join column `A` is not in the DMMF | flagged `join_ambiguous`; traversal needs an explicit decision |
 | `@db.*` native types | not sent through the generator protocol at all (verified) | precision/length annotations invisible; recoverable only by lexing the schema text |
+| `@relation(onUpdate:)` | not sent either — a field declaring it arrives with `relationOnDelete` and no `relationOnUpdate` key (verified) | the emitter cannot tell "undeclared" from "declared Cascade"; hardcoding Prisma's default writes the wrong `ON UPDATE` on every relation that declares one |
 | `relationMode = "prisma"` | not sent either | the database has *no* FKs; the constraints we build would diff against every table |
 | any provider but PostgreSQL | type table not verified against a real `db push` | `UnsupportedProviderError` naming the provider |
 | an unmapped `@db.*` annotation | no verified type for it | raises naming the annotation, rather than falling back to the default type |
 
 Three annotations Prisma does not send in the DMMF are recovered by lexing the
-raw schema text (`generator/_native_types.py`): `@db.*`, and `@relation(map:)`.
-`relationMode` is the remaining one and is recoverable the same way.
+raw schema text (`generator/_native_types.py`): `@db.*`, `@relation(map:)` and
+`@relation(onUpdate:)`. `relationMode` is the remaining one and is recoverable
+the same way.
 
 ---
 

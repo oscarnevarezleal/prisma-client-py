@@ -19,16 +19,18 @@ The fixture is recorded from a real `prisma generate` against
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator, cast
+from typing import Any, Dict, Iterator, Optional, cast
 
 import pytest
 
+from prisma._schema import RelationSchema, _RelationCommon
 from prisma.generator import models as generator_models
 from prisma.generator.models import (
     Datamodel,
     build_enum_metadata,
     build_schema_metadata,
 )
+from prisma.generator._native_types import parse_relation_maps, parse_relation_on_update
 
 from ..dmmf_sample import SAMPLE, schema_text, loaded_datamodel
 
@@ -273,6 +275,85 @@ def test_on_delete_absent_means_prisma_default(schema: Dict[str, Any]) -> None:
     assert schema['Entry']['relations']['account']['on_delete'] == 'Cascade'
 
 
+# -- `onUpdate`, which the DMMF does not carry at all -------------------------
+
+
+def test_on_update_is_recovered_from_the_schema_text(schema: Dict[str, Any]) -> None:
+    """Prisma sends no `relationOnUpdate` key, so this can only come from lexing.
+
+    Every declared action, including the one written after `map:` in the
+    argument list — the two lexed `@relation` arguments have to coexist and
+    neither may depend on the order they appear in.
+    """
+    relations = schema['MaintenanceLock']['relations']
+    assert relations['restricted']['on_update'] == 'Restrict'
+    assert relations['inert']['on_update'] == 'NoAction'
+    assert relations['nulled']['on_update'] == 'SetNull'
+    assert relations['defaulted']['on_update'] == 'SetDefault'
+
+    # ...and `map:` on that same field still reads correctly
+    assert relations['nulled']['fk_name'] == 'maintenance_lock_nulled_fk'
+
+
+def test_on_update_absent_means_prisma_default(schema: Dict[str, Any]) -> None:
+    """None is "whatever Prisma does", which for `onUpdate` is Cascade.
+
+    Baking that default in here would lose the distinction between "the schema
+    did not say" and "the schema said Cascade" — which is exactly how the
+    hardcoded CASCADE in the SQLAlchemy emitter went unnoticed.
+    """
+    assert schema['MaintenanceLock']['relations']['plain']['on_update'] is None
+    assert schema['Entry']['relations']['account']['on_update'] is None
+
+
+def test_on_update_is_independent_of_on_delete(schema: Dict[str, Any]) -> None:
+    """A field may declare either, both or neither; one cannot stand in for the other."""
+    relations = schema['MaintenanceLock']['relations']
+
+    assert relations['restricted']['on_update'] == 'Restrict'
+    assert relations['restricted']['on_delete'] == 'Cascade'
+
+    # `onUpdate` alone — `onDelete` still falls back to Prisma's arity default
+    assert relations['inert']['on_update'] == 'NoAction'
+    assert relations['inert']['on_delete'] is None
+
+
+def test_on_update_is_reported_on_the_inverse_side_too(schema: Dict[str, Any]) -> None:
+    """Both sides describe the same constraint, as they already do for `on_delete`.
+
+    The inverse side has no `@relation(onUpdate:)` of its own to lex, so it has
+    to be read off the owning field on the other model.
+    """
+    holder = schema['MaintenanceLockHolder']['relations']
+    assert holder['restricted']['owner'] is False
+    assert holder['restricted']['on_update'] == 'Restrict'
+    assert holder['plain']['on_update'] is None
+
+
+def test_many_to_many_has_no_on_update(schema: Dict[str, Any]) -> None:
+    """Prisma rejects a referential action on an implicit m2m, so neither side has one."""
+    assert schema['Entry']['relations']['labels']['on_update'] is None
+    assert schema['Label']['relations']['entries']['on_update'] is None
+
+
+def test_self_relation_reports_on_update_on_both_sides(schema: Dict[str, Any]) -> None:
+    """A self-relation resolves the owner by field, not by model, so it needs its own case."""
+    relations = schema['Entry']['relations']
+    assert relations['parent']['on_update'] is None
+    assert relations['children']['on_update'] is None
+
+
+def test_without_schema_text_on_update_is_absent(datamodel: Datamodel) -> None:
+    """No raw schema, no lexing — and absence has to read as the default, not as a crash.
+
+    The generator can be invoked without the schema text; every consumer already
+    has to treat `None` as "Prisma's default", so this degrades to exactly the
+    behaviour of a schema that declares nothing.
+    """
+    built = build_schema_metadata(datamodel)
+    assert built['MaintenanceLock']['relations']['restricted']['on_update'] is None
+
+
 # -- implicit many-to-many ---------------------------------------------------
 
 
@@ -351,9 +432,96 @@ def test_every_model_is_present(schema: Dict[str, Any], datamodel: Datamodel) ->
     assert set(schema) == {model.name for model in datamodel.models}
 
 
+def test_relation_payload_matches_its_typed_view(schema: Dict[str, Any]) -> None:
+    """`prisma._schema.RelationSchema` is the only description consumers read.
+
+    The payload is plain dicts, so a key added to one and not the other is
+    invisible until a caller indexes something that is not there — or, worse,
+    quietly keeps reading a key nobody maintains. Both directions are checked:
+    every always-present key must actually be present on every relation, and no
+    relation may carry a key the typed view does not describe.
+    """
+    for model, spec in schema.items():
+        for name, relation in spec['relations'].items():
+            where = f'{model}.{name}'
+            assert not set(_RelationCommon.__annotations__) - set(relation), where
+            assert not set(relation) - set(RelationSchema.__annotations__), where
+
+
 def test_literal_round_trips(schema: Dict[str, Any]) -> None:
     """It is emitted into generated code as source, so it must survive repr()."""
     import ast
 
     rendered = generator_models.as_literal(schema)
     assert ast.literal_eval(rendered.strip()) == schema
+
+
+# -- the `@relation` lexer ----------------------------------------------------
+#
+# `parse_relation_on_update` reads text Prisma's own parser has already
+# accepted, so the cases that matter are the ones where a naive regex reads
+# something that is *not* an argument, or misses one that is.
+
+
+def model_source(field: str) -> str:
+    return 'model Child {{\n  id String @id\n  {}\n}}\n'.format(field)
+
+
+@pytest.mark.parametrize(
+    ('field', 'expected'),
+    [
+        (
+            'parent Parent @relation(fields: [parentId], references: [id], onUpdate: Restrict)',
+            'Restrict',
+        ),
+        # any order, and alongside the other arguments the lexer reads
+        (
+            'parent Parent @relation(onUpdate: NoAction, fields: [parentId], references: [id], map: "fk")',
+            'NoAction',
+        ),
+        # Prisma accepts whitespace around the colon
+        (
+            'parent Parent @relation ( fields: [parentId], references: [id], onUpdate : SetNull )',
+            'SetNull',
+        ),
+        # a `)` inside a quoted value must not end the argument list early
+        (
+            'parent Parent @relation(fields: [parentId], references: [id], map: "a)b", onUpdate: SetDefault)',
+            'SetDefault',
+        ),
+        # declared on the *other* attribute, which is a different constraint
+        ('parent Parent @relation(fields: [parentId], references: [id], onDelete: Cascade)', None),
+        # a relation *name* that happens to spell the argument
+        ('parent Parent @relation("onUpdate: Cascade", fields: [parentId], references: [id])', None),
+        # ...and a constraint name that does
+        ('parent Parent @relation(fields: [parentId], references: [id], map: "onUpdate: Cascade")', None),
+        # commented out entirely
+        ('// parent Parent @relation(fields: [parentId], references: [id], onUpdate: Restrict)', None),
+        # trailing comment after a field that declares nothing
+        ('parent Parent @relation(fields: [parentId], references: [id]) // onUpdate: Restrict', None),
+        # not valid Prisma, and not something to guess the end of either
+        ('parent Parent @relation(fields: [parentId], references: [id], onUpdate: Restrict', None),
+        # no `@relation` at all
+        ('title String @db.VarChar(40)', None),
+    ],
+)
+def test_lexes_on_update(field: str, expected: Optional[str]) -> None:
+    parsed = parse_relation_on_update(model_source(field))
+    assert parsed.get('Child', {}).get('parent') == expected
+
+
+def test_block_attributes_are_not_fields() -> None:
+    """`@@index(map:)` is a different namespace and no field owns it."""
+    assert parse_relation_on_update('model Child {\n  @@index([a], map: "onUpdate: Restrict")\n}\n') == {}
+
+
+def test_map_still_reads_with_a_paren_in_the_name() -> None:
+    """The shared scanner is what makes this work; `[^)]*` dropped it silently."""
+    source = model_source('parent Parent @relation(fields: [parentId], references: [id], map: "a)b")')
+    assert parse_relation_maps(source) == {'Child': {'parent': 'a)b'}}
+
+
+def test_map_without_a_string_value_is_reported_absent() -> None:
+    """Not valid Prisma; the lexer reports what it cannot read rather than guessing."""
+    source = model_source('parent Parent @relation(fields: [parentId], references: [id], map: fk)')
+    assert parse_relation_maps(source) == {}

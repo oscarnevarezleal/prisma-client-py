@@ -130,3 +130,27 @@ def test_indexes_are_actually_parsed(wire: Dict[str, Any]) -> None:
     assert len(datamodel.indexes) == len(raw)
     assert datamodel.indexes[0].model == raw[0]['model']
     assert [f.name for f in datamodel.indexes[0].fields] == [f['name'] for f in raw[0]['fields']]
+
+
+def test_on_update_is_not_on_the_wire(wire: Dict[str, Any]) -> None:
+    """The measurement that justifies lexing `onUpdate:` out of the schema text.
+
+    This module's premise is that anything on the wire must be modelled. The
+    mirror-image failure is assuming something is on the wire when it is not:
+    `onDelete` arrives as `relationOnDelete` and `onUpdate` arrives as nothing
+    at all, so a reader that models one and infers the other emits the wrong
+    `ON UPDATE` on every relation that declares one.
+
+    Pinned rather than assumed, and pinned as an *absence*, so that a Prisma
+    release which starts sending it fails here — at which point the lexer should
+    defer to the wire, exactly as `Field.native_type` already does.
+    """
+    fields = [f for model in wire['dmmf']['datamodel']['models'] for f in model['fields']]
+
+    declared = [f for f in fields if f.get('relationOnDelete')]
+    assert declared, 'sample schema declares no `onDelete`'
+    assert not [f for f in fields if 'relationOnUpdate' in f]
+
+    # ...and the sample really does declare one, so the absence above is Prisma
+    # dropping it rather than the schema never asking.
+    assert 'onUpdate: Restrict' in wire['datamodel']

@@ -201,6 +201,48 @@ def test_undeclared_on_delete_is_set_null_for_optional(metadata: sa.MetaData) ->
     assert fk(metadata, 'Entry', 'Entry_parentId_fkey').ondelete == 'SET NULL'
 
 
+@pytest.mark.parametrize(
+    ('name', 'expected'),
+    [
+        ('maintenance_locks_restricted_id_fkey', 'RESTRICT'),
+        ('maintenance_locks_inert_id_fkey', 'NO ACTION'),
+        ('maintenance_lock_nulled_fk', 'SET NULL'),
+        ('maintenance_locks_defaulted_id_fkey', 'SET DEFAULT'),
+    ],
+)
+def test_declared_on_update(metadata: sa.MetaData, name: str, expected: str) -> None:
+    """Every one of these was `ON UPDATE CASCADE` before, silently.
+
+    `onUpdate` is not in the DMMF at all — a field declaring it sends
+    `relationOnDelete` and no `relationOnUpdate` key — so the emitter hardcoded
+    Prisma's default and got it right on every schema that never declared one.
+    """
+    assert fk(metadata, 'maintenance_locks', name).onupdate == expected
+
+
+def test_undeclared_on_update_is_cascade_at_every_arity(metadata: sa.MetaData) -> None:
+    """Unlike `onDelete`, the default does not depend on whether the FK is required.
+
+    Verified against `prisma db push`: mandatory and optional relations alike get
+    `ON UPDATE CASCADE`.
+    """
+    assert fk(metadata, 'maintenance_locks', 'maintenance_locks_plain_id_fkey').onupdate == 'CASCADE'
+    # required
+    assert fk(metadata, 'Profile', 'Profile_account_id_fkey').onupdate == 'CASCADE'
+    # optional
+    assert fk(metadata, 'Entry', 'Entry_parentId_fkey').onupdate == 'CASCADE'
+
+
+def test_on_update_does_not_disturb_on_delete(metadata: sa.MetaData) -> None:
+    """The two are separate constraints on the same foreign key."""
+    restricted = fk(metadata, 'maintenance_locks', 'maintenance_locks_restricted_id_fkey')
+    assert (restricted.onupdate, restricted.ondelete) == ('RESTRICT', 'CASCADE')
+
+    # declares `onUpdate` only, so `onDelete` still takes Prisma's arity default
+    inert = fk(metadata, 'maintenance_locks', 'maintenance_locks_inert_id_fkey')
+    assert (inert.onupdate, inert.ondelete) == ('NO ACTION', 'RESTRICT')
+
+
 def test_only_the_owning_side_declares_the_foreign_key(metadata: sa.MetaData) -> None:
     """Both sides of a relation describe the same constraint."""
     accounts = table(metadata, 'accounts')

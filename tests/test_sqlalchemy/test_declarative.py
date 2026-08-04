@@ -280,6 +280,25 @@ def test_native_types_reach_the_annotations(models: Any) -> None:
     assert models.Ticket.__annotations__['id'] == 'Mapped[uuid.UUID]'
 
 
+def test_referential_actions_reach_the_emitted_source(models: Any, emitted: Any) -> None:
+    """The emitter reads actions off the built metadata, so it inherits the fix.
+
+    Worth pinning rather than assuming: it renders `ondelete`/`onupdate` as
+    literals into checked-in source, so a second hardcoded default here would be
+    invisible to the Core tests and would ship as a file people read and trust.
+    """
+    actions = {
+        str(constraint.name): (constraint.onupdate, constraint.ondelete)
+        for constraint in models.Base.metadata.tables['maintenance_locks'].constraints
+        if isinstance(constraint, sa.ForeignKeyConstraint)
+    }
+    assert actions['maintenance_locks_restricted_id_fkey'] == ('RESTRICT', 'CASCADE')
+    assert actions['maintenance_locks_plain_id_fkey'] == ('CASCADE', 'RESTRICT')
+
+    assert "onupdate='RESTRICT'" in emitted.source
+    assert "onupdate='SET DEFAULT'" in emitted.source
+
+
 def test_array_annotation_is_a_list(models: Any) -> None:
     assert models.Account.__annotations__['tags'] == 'Mapped[Optional[List[str]]]'
 

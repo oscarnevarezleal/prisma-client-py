@@ -12,7 +12,7 @@
       "sourceFilePath": "/tmp/claude-0/-home-user-prisma-client-py/29c2c0a1-cc17-55e1-b01b-febca43467c6/scratchpad/rerecord/schema.prisma"
     }
   ],
-  "datamodel": "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"BENCH_DATABASE_URL\")\n}\n\ngenerator client {\n  provider                    = \"python -m prisma\"\n  interface                   = \"asyncio\"\n  output                      = \"./client\"\n  enable_experimental_decimal = true\n  schemaMetadata              = true\n}\n\nenum Role {\n  OWNER\n  ADMIN  @map(\"administrator\")\n  VIEWER\n}\n\nmodel Account {\n  id        String   @id @default(cuid())\n  email     String   @unique\n  slug      String   @map(\"url_slug\")\n  role      Role     @default(VIEWER)\n  balance   Decimal\n  payload   Json?\n  secret    Bytes?\n  visits    BigInt   @default(0)\n  tags      String[]\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n  posts     Entry[]\n  profile   Profile?\n\n  @@unique([slug, role], name: \"slug_role\")\n  @@index([email, createdAt], map: \"account_email_created_idx\")\n  @@map(\"accounts\")\n}\n\nmodel Entry {\n  id        String  @id @default(cuid())\n  accountId String\n  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)\n  title     String\n  parentId  String?\n  parent    Entry?  @relation(\"tree\", fields: [parentId], references: [id])\n  children  Entry[] @relation(\"tree\")\n  labels    Label[]\n\n  @@index([accountId])\n}\n\n// The FK lives on the *other* side of a to-one relation, which compiles\n// differently to `Entry.account` even though both are `to-one`.\nmodel Profile {\n  id        Int     @id @default(autoincrement())\n  accountId String  @unique @map(\"account_id\")\n  account   Account @relation(fields: [accountId], references: [id])\n  bio       String?\n}\n\nmodel Label {\n  id      Int     @id @default(autoincrement())\n  name    String  @map(\"label_name\")\n  entries Entry[]\n  related Label[] @relation(\"similar\")\n  similar Label[] @relation(\"similar\")\n\n  @@map(\"labels\")\n}\n\nmodel Composite {\n  left  String\n  right String\n  note  String?\n\n  @@id([left, right])\n}\n\n// Every model below covers a defect found by a client running the migration\n// runbook against a 182-model production schema. All five produced either a\n// crash or a silent divergence, and none was reachable from the models above.\nmodel Ticket {\n  // B2: Prisma normalises `uuid()` to `uuid(4)` on the wire. Left attached, the\n  // versioned name matched no allowlist entry and blocked the whole schema.\n  id String @id @default(uuid()) @db.Uuid\n\n  // B5: a non-primary-key autoincrement. SQLAlchemy emits SERIAL only for an\n  // integer *primary* key, so this silently lost its sequence and every INSERT\n  // failed \u2014 with an empty Alembic diff, because server defaults are not\n  // compared.\n  ticketNumber Int    @default(autoincrement())\n  bigNumber    BigInt @default(autoincrement())\n\n  // B4: an empty scalar list default. A bare `ARRAY[]` is a PostgreSQL error,\n  // not a diff: `cannot determine type of empty array`.\n  readBy   String[] @default([]) @db.Uuid\n  keywords String[] @default([\"urgent\", \"billing\"])\n\n  // B1: `@db.*` never reaches the generator payload, so these read as `text`\n  // unless the raw schema is lexed. On the reporting client that was 554\n  // columns including every primary and foreign key.\n  reference String   @db.VarChar(40)\n  amount    Decimal  @db.Decimal(12, 2)\n  seenAt    DateTime @db.Timestamptz(6)\n  priority  Int      @db.SmallInt\n\n  links   TicketAttachmentRequirement[]\n  regions Region[]\n}\n\n// B3: the derived unique constraint name is 77 characters. PostgreSQL truncates\n// at 63 and so does Prisma; SQLAlchemy raises `IdentifierError` before emitting\n// any SQL, which fails the Alembic step outright.\nmodel TicketAttachmentRequirement {\n  attachmentId     String\n  attachmentRuleId String\n  ticketId         String @db.Uuid\n  ticket           Ticket @relation(fields: [ticketId], references: [id])\n\n  @@id([attachmentId, attachmentRuleId])\n  @@unique([attachmentId, attachmentRuleId, ticketId])\n  @@map(\"ticket_attachment_requirements\")\n}\n\n// Three more shapes, from the retest of the fix above. All three were\n// unreachable before \u2014 B2 crashed first \u2014 and none was in this schema, which is\n// the same reason the original five got through.\nmodel Region {\n  id String @id @default(uuid()) @db.Uuid\n\n  // B7: `@relation(map:)` is absent from the DMMF, like `@db.*`. Without lexing\n  // it the constraint is named after the table instead, and the bug is\n  // invisible except where `map:` is doing something \u2014 the only reason to write\n  // it. Alembic does not compare constraint names, so the gate stays quiet.\n  ticketId String @map(\"ticket_id\") @db.Uuid\n  ticket   Ticket @relation(fields: [ticketId], references: [id], map: \"custom_region_fk\")\n\n  scopeId   String   @map(\"scope_id\") @db.Uuid\n  createdAt DateTime @default(now()) @map(\"created_at\")\n\n  // B6: `sort: Desc` is in the DMMF and was simply dropped. On a composite\n  // index that is not cosmetic \u2014 (a ASC, b ASC) read backwards is (a DESC,\n  // b DESC), which serves neither `ORDER BY a, b DESC` nor `ORDER BY a DESC, b`.\n  @@index([scopeId, createdAt(sort: Desc)], map: \"idx_region_scope_created\")\n  @@map(\"regions\")\n}\n\n// B3 remainder: the *foreign key* name also overflows 63 characters. The\n// original report's example was a `_key`; it became the test case and the\n// `_fkey` path was never exercised \u2014 the response's own lesson, recurring\n// inside its own fix.\nmodel ScheduledMaintenanceWindow {\n  id      String                             @id @default(uuid()) @db.Uuid\n  regions ScheduledMaintenanceWindowRegion[]\n\n  @@map(\"scheduled_maintenance_window\")\n}\n\nmodel ScheduledMaintenanceWindowRegion {\n  id                           String                     @id @default(uuid()) @db.Uuid\n  scheduledMaintenanceWindowId String                     @map(\"scheduled_maintenance_window_id\") @db.Uuid\n  scheduledMaintenanceWindow   ScheduledMaintenanceWindow @relation(fields: [scheduledMaintenanceWindowId], references: [id])\n\n  @@map(\"scheduled_maintenance_window_regions\")\n}\n",
+  "datamodel": "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"BENCH_DATABASE_URL\")\n}\n\ngenerator client {\n  provider                    = \"python -m prisma\"\n  interface                   = \"asyncio\"\n  output                      = \"./client\"\n  enable_experimental_decimal = true\n  schemaMetadata              = true\n}\n\nenum Role {\n  OWNER\n  ADMIN  @map(\"administrator\")\n  VIEWER\n}\n\nmodel Account {\n  id        String   @id @default(cuid())\n  email     String   @unique\n  slug      String   @map(\"url_slug\")\n  role      Role     @default(VIEWER)\n  balance   Decimal\n  payload   Json?\n  secret    Bytes?\n  visits    BigInt   @default(0)\n  tags      String[]\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n  posts     Entry[]\n  profile   Profile?\n\n  @@unique([slug, role], name: \"slug_role\")\n  @@index([email, createdAt], map: \"account_email_created_idx\")\n  @@map(\"accounts\")\n}\n\nmodel Entry {\n  id        String  @id @default(cuid())\n  accountId String\n  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)\n  title     String\n  parentId  String?\n  parent    Entry?  @relation(\"tree\", fields: [parentId], references: [id])\n  children  Entry[] @relation(\"tree\")\n  labels    Label[]\n\n  @@index([accountId])\n}\n\n// The FK lives on the *other* side of a to-one relation, which compiles\n// differently to `Entry.account` even though both are `to-one`.\nmodel Profile {\n  id        Int     @id @default(autoincrement())\n  accountId String  @unique @map(\"account_id\")\n  account   Account @relation(fields: [accountId], references: [id])\n  bio       String?\n}\n\nmodel Label {\n  id      Int     @id @default(autoincrement())\n  name    String  @map(\"label_name\")\n  entries Entry[]\n  related Label[] @relation(\"similar\")\n  similar Label[] @relation(\"similar\")\n\n  @@map(\"labels\")\n}\n\nmodel Composite {\n  left  String\n  right String\n  note  String?\n\n  @@id([left, right])\n}\n\n// Every model below covers a defect found by a client running the migration\n// runbook against a 182-model production schema. All five produced either a\n// crash or a silent divergence, and none was reachable from the models above.\nmodel Ticket {\n  // B2: Prisma normalises `uuid()` to `uuid(4)` on the wire. Left attached, the\n  // versioned name matched no allowlist entry and blocked the whole schema.\n  id String @id @default(uuid()) @db.Uuid\n\n  // B5: a non-primary-key autoincrement. SQLAlchemy emits SERIAL only for an\n  // integer *primary* key, so this silently lost its sequence and every INSERT\n  // failed \u2014 with an empty Alembic diff, because server defaults are not\n  // compared.\n  ticketNumber Int    @default(autoincrement())\n  bigNumber    BigInt @default(autoincrement())\n\n  // B4: an empty scalar list default. A bare `ARRAY[]` is a PostgreSQL error,\n  // not a diff: `cannot determine type of empty array`.\n  readBy   String[] @default([]) @db.Uuid\n  keywords String[] @default([\"urgent\", \"billing\"])\n\n  // B1: `@db.*` never reaches the generator payload, so these read as `text`\n  // unless the raw schema is lexed. On the reporting client that was 554\n  // columns including every primary and foreign key.\n  reference String   @db.VarChar(40)\n  amount    Decimal  @db.Decimal(12, 2)\n  seenAt    DateTime @db.Timestamptz(6)\n  priority  Int      @db.SmallInt\n\n  links   TicketAttachmentRequirement[]\n  regions Region[]\n}\n\n// B3: the derived unique constraint name is 77 characters. PostgreSQL truncates\n// at 63 and so does Prisma; SQLAlchemy raises `IdentifierError` before emitting\n// any SQL, which fails the Alembic step outright.\nmodel TicketAttachmentRequirement {\n  attachmentId     String\n  attachmentRuleId String\n  ticketId         String @db.Uuid\n  ticket           Ticket @relation(fields: [ticketId], references: [id])\n\n  @@id([attachmentId, attachmentRuleId])\n  @@unique([attachmentId, attachmentRuleId, ticketId])\n  @@map(\"ticket_attachment_requirements\")\n}\n\n// Three more shapes, from the retest of the fix above. All three were\n// unreachable before \u2014 B2 crashed first \u2014 and none was in this schema, which is\n// the same reason the original five got through.\nmodel Region {\n  id String @id @default(uuid()) @db.Uuid\n\n  // B7: `@relation(map:)` is absent from the DMMF, like `@db.*`. Without lexing\n  // it the constraint is named after the table instead, and the bug is\n  // invisible except where `map:` is doing something \u2014 the only reason to write\n  // it. Alembic does not compare constraint names, so the gate stays quiet.\n  ticketId String @map(\"ticket_id\") @db.Uuid\n  ticket   Ticket @relation(fields: [ticketId], references: [id], map: \"custom_region_fk\")\n\n  scopeId   String   @map(\"scope_id\") @db.Uuid\n  createdAt DateTime @default(now()) @map(\"created_at\")\n\n  // B6: `sort: Desc` is in the DMMF and was simply dropped. On a composite\n  // index that is not cosmetic \u2014 (a ASC, b ASC) read backwards is (a DESC,\n  // b DESC), which serves neither `ORDER BY a, b DESC` nor `ORDER BY a DESC, b`.\n  @@index([scopeId, createdAt(sort: Desc)], map: \"idx_region_scope_created\")\n  @@map(\"regions\")\n}\n\n// B3 remainder: the *foreign key* name also overflows 63 characters. The\n// original report's example was a `_key`; it became the test case and the\n// `_fkey` path was never exercised \u2014 the response's own lesson, recurring\n// inside its own fix.\nmodel ScheduledMaintenanceWindow {\n  id      String                             @id @default(uuid()) @db.Uuid\n  regions ScheduledMaintenanceWindowRegion[]\n\n  @@map(\"scheduled_maintenance_window\")\n}\n\n// B8: `onUpdate:` is in the schema language and absent from the DMMF, exactly\n// like `@db.*` (B1) and `@relation(map:)` (B7). A field written\n// `@relation(..., onUpdate: Restrict, onDelete: Cascade)` arrives carrying\n// `relationOnDelete: 'Cascade'` and **no** `relationOnUpdate` key at all, so the\n// emitter hardcoded CASCADE \u2014 right by default and wrong whenever a schema says\n// otherwise, which `pg_dump` is the only gate here that would notice. Nothing\n// above declares one, which is the whole reason it went unseen: a fixture only\n// tests what it contains.\nmodel MaintenanceLockHolder {\n  id String @id @default(uuid()) @db.Uuid\n\n  restricted MaintenanceLock[] @relation(\"restrictedLock\")\n  inert      MaintenanceLock[] @relation(\"inertLock\")\n  nulled     MaintenanceLock[] @relation(\"nulledLock\")\n  defaulted  MaintenanceLock[] @relation(\"defaultedLock\")\n  plain      MaintenanceLock[] @relation(\"plainLock\")\n\n  @@map(\"maintenance_lock_holders\")\n}\n\nmodel MaintenanceLock {\n  id String @id @default(uuid()) @db.Uuid\n\n  // the reported shape: a declared `onUpdate` alongside a declared `onDelete`\n  restrictedId String                @map(\"restricted_id\") @db.Uuid\n  restricted   MaintenanceLockHolder @relation(\"restrictedLock\", fields: [restrictedId], references: [id], onUpdate: Restrict, onDelete: Cascade)\n\n  // `onUpdate` alone \u2014 `onDelete` still has to fall back to Prisma's default for\n  // the arity, so reading one from the other is not available\n  inertId String                @map(\"inert_id\") @db.Uuid\n  inert   MaintenanceLockHolder @relation(\"inertLock\", fields: [inertId], references: [id], onUpdate: NoAction)\n\n  // optional, with `onUpdate:` sitting *after* `map:` in the argument list: the\n  // two lexed attributes have to coexist and neither may depend on the order\n  nulledId String?                @map(\"nulled_id\") @db.Uuid\n  nulled   MaintenanceLockHolder? @relation(\"nulledLock\", fields: [nulledId], references: [id], map: \"maintenance_lock_nulled_fk\", onUpdate: SetNull)\n\n  // `SetDefault` is only legal where the column has a default to fall back to\n  defaultedId String                @default(\"00000000-0000-0000-0000-000000000000\") @map(\"defaulted_id\") @db.Uuid\n  defaulted   MaintenanceLockHolder @relation(\"defaultedLock\", fields: [defaultedId], references: [id], onUpdate: SetDefault)\n\n  // no `onUpdate` at all, so the lexer must not smear the four above onto it\n  plainId String                @map(\"plain_id\") @db.Uuid\n  plain   MaintenanceLockHolder @relation(\"plainLock\", fields: [plainId], references: [id])\n\n  @@map(\"maintenance_locks\")\n}\n\nmodel ScheduledMaintenanceWindowRegion {\n  id                           String                     @id @default(uuid()) @db.Uuid\n  scheduledMaintenanceWindowId String                     @map(\"scheduled_maintenance_window_id\") @db.Uuid\n  scheduledMaintenanceWindow   ScheduledMaintenanceWindow @relation(fields: [scheduledMaintenanceWindowId], references: [id])\n\n  @@map(\"scheduled_maintenance_window_regions\")\n}\n",
   "dmmf": {
     "datamodel": {
       "enums": [
@@ -1005,6 +1005,312 @@
           "isGenerated": false
         },
         {
+          "name": "MaintenanceLockHolder",
+          "dbName": "maintenance_lock_holders",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "uuid(4)",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "restricted",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLock",
+              "relationName": "restrictedLock",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "inert",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLock",
+              "relationName": "inertLock",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "nulled",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLock",
+              "relationName": "nulledLock",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "defaulted",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLock",
+              "relationName": "defaultedLock",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "plain",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLock",
+              "relationName": "plainLock",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "MaintenanceLock",
+          "dbName": "maintenance_locks",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "uuid(4)",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "restrictedId",
+              "dbName": "restricted_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "restricted",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLockHolder",
+              "relationName": "restrictedLock",
+              "relationFromFields": [
+                "restrictedId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "relationOnDelete": "Cascade",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "inertId",
+              "dbName": "inert_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "inert",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLockHolder",
+              "relationName": "inertLock",
+              "relationFromFields": [
+                "inertId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "nulledId",
+              "dbName": "nulled_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "nulled",
+              "kind": "object",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLockHolder",
+              "relationName": "nulledLock",
+              "relationFromFields": [
+                "nulledId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "defaultedId",
+              "dbName": "defaulted_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": "00000000-0000-0000-0000-000000000000",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "defaulted",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLockHolder",
+              "relationName": "defaultedLock",
+              "relationFromFields": [
+                "defaultedId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "plainId",
+              "dbName": "plain_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "plain",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLockHolder",
+              "relationName": "plainLock",
+              "relationFromFields": [
+                "plainId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
           "name": "ScheduledMaintenanceWindowRegion",
           "dbName": "scheduled_maintenance_window_regions",
           "fields": [
@@ -1245,6 +1551,26 @@
         },
         {
           "model": "ScheduledMaintenanceWindow",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "MaintenanceLockHolder",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "MaintenanceLock",
           "type": "id",
           "isDefinedOnField": true,
           "fields": [
