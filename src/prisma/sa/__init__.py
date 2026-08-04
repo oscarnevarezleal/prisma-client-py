@@ -41,6 +41,11 @@ if TYPE_CHECKING:
     # promises. Ruff reads that as a misplaced runtime import; it is not.
     from ._build import build_metadata as build_metadata  # noqa: TCH004
     from ._types import UnsupportedProviderError as UnsupportedProviderError  # noqa: TCH004
+    from ._alembic import build_alembic_baseline as build_alembic_baseline  # noqa: TCH004
+    from ._declarative import (
+        UnsupportedShapeError as UnsupportedShapeError,  # noqa: TCH004
+        build_declarative as build_declarative,  # noqa: TCH004
+    )
 
 #: Version of the `prisma.sa` contract, independent of the client version.
 #: Both this fork and upstream report `prisma.__version__ == '0.15.0'`, so there
@@ -57,7 +62,10 @@ __all__ = (
     'values_for_create',
     'values_for_update',
     'clear_cache',
+    'build_declarative',
+    'build_alembic_baseline',
     'UnsupportedProviderError',
+    'UnsupportedShapeError',
 )
 
 _cache: Optional[Any] = None
@@ -74,6 +82,18 @@ def __getattr__(name: str) -> Any:
         from ._types import UnsupportedProviderError
 
         return UnsupportedProviderError
+    if name == 'build_declarative':
+        from ._declarative import build_declarative
+
+        return build_declarative
+    if name == 'UnsupportedShapeError':
+        from ._declarative import UnsupportedShapeError
+
+        return UnsupportedShapeError
+    if name == 'build_alembic_baseline':
+        from ._alembic import build_alembic_baseline
+
+        return build_alembic_baseline
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
