@@ -1,1 +1,5 @@
-msgspec==0.21.1
+# 0.21 requires Python >= 3.10, and this pin is pulled into `test.txt`, so it
+# has to cover the whole test matrix — 3.8 and 3.9 included — or the install
+# fails for every job rather than only the ones that exercise the backend.
+msgspec==0.18.6; python_version < "3.10"
+msgspec==0.21.1; python_version >= "3.10"
