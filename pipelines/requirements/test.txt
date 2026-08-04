@@ -18,6 +18,10 @@
 # so the guarantee has to hold in CI and not only on a maintainer's machine
 -r deps/ruff.txt
 -r deps/mypy.txt
+# `prisma.sa` renders the Alembic files as text and never imports alembic, but
+# the tests apply the baseline to a real database and type check the emitted
+# `env.py`, which imports it
+-r deps/alembic.txt
 pytest-sugar
 mock==5.1.0
 pytest-subprocess==1.5.2
