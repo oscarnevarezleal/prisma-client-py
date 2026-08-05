@@ -958,6 +958,23 @@ Pin the same version in `package.json`, and use `python -m prisma` rather than
 
 ## Changelog
 
+**1.4.0** — two silent DDL divergences in shapes the DMMF *does* report, both
+raised in review rather than by a failing gate.
+
+| | fixed |
+| --- | --- |
+| a compound `@@id` whose declared order differs from the field order built the key the other way round: the order came from the per-column flags, which are in DMMF field order, not from `@@id([…])` | ✅ |
+| index field modifiers other than `sort:` were dropped — `ops:` on `@@index`, and *every* modifier on `@@unique`, which went straight from its column list to the index | ✅ |
+
+`ops:` now becomes `postgresql_ops`, with Prisma's built-in operator class names
+translated through a table measured against `pg_opclass` after a real
+`prisma db push` — `Int4MinMaxOps` is `int4_minmax_ops`, not the
+`int4_min_max_ops` the name suggests — and `raw("…")` passed through as written.
+Three shapes now refuse rather than build a plausible index: `length:`, which
+PostgreSQL has no equivalent for and Prisma rejects on this provider; an
+unrecognised built-in operator class; and `ops:` on a descending member, which
+Prisma builds as `(col opclass DESC)` and SQLAlchemy cannot express.
+
 **1.3.0** — the last two annotations that live in the schema language and never
 reach the DMMF. Both were found here rather than reported.
 

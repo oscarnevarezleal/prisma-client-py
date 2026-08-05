@@ -158,7 +158,13 @@ Two habits follow, and they are worth more than any individual fix:
   gives the stored label and a naive one.
 - Query engine → SQLAlchemy on a mixed workload: 8.49 ms → 3.48 ms total,
   connect 54–72 ms → 6–8 ms. Memory is a wash — removing the 24.7 MB engine
-  subprocess is offset by importing SQLAlchemy.
+  subprocess is offset by importing SQLAlchemy. **The total is an upper bound**:
+  it was measured while the SQLAlchemy side of the `include` case returned
+  unassociated row lists rather than attaching the relations, so that row timed
+  less work than Prisma did. The benchmark now groups and attaches inside the
+  timed section; re-running it needs a lab client generated *without*
+  `lazyActions`, because of the read-path bug below. `find_unique`, `count` and
+  `query_raw` attach nothing and are unaffected.
 
 ## Open, for subsequent rounds
 

@@ -38,6 +38,17 @@ is reproducible from there.
 The same four queries, Prisma client versus SQLAlchemy Core over tables built
 from the same schema, both sides asserted to return identical rows before timing:
 
+> **The include row, and therefore the total, is stale and overstates the win.**
+> The `sa_vs_engine.py` SQLAlchemy path originally returned three unassociated
+> row lists where Prisma returns posts with `author` and `comments` attached, so
+> it timed strictly less work. The grouping and attachment are now inside the
+> timed section and the equivalence check compares relations post by post — but
+> the numbers below predate that, and a re-run in this environment is blocked by
+> the open `lazyActions` read-path bug in the generated lab client. Treat
+> `find_many` + includes, the total, and the 59 % as an upper bound until the
+> lab is rebuilt without `lazyActions` and the benchmark re-run. The other three
+> rows are unaffected: they attach no relations.
+
 | query | Prisma | SQLAlchemy Core | saved |
 | --- | ---: | ---: | ---: |
 | `find_many` + 2 includes, 25 rows | 4.07 ms | 2.22 ms | 45% |

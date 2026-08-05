@@ -82,7 +82,7 @@ extended specifically to stop this. That is the point: extending the fixture
 *reactively*, one report at a time, converges slowly. Each round finds the
 shapes the previous round did not think of.
 
-The reference schema now covers eleven shapes across four rounds:
+The reference schema now covers fourteen shapes across five rounds:
 
 | round | shapes added |
 | --- | --- |
@@ -90,6 +90,7 @@ The reference schema now covers eleven shapes across four rounds:
 | 1.1.0 | `uuid()` → `uuid(4)`, non-PK `autoincrement()`, `@db.*`, long `_key`, empty list default |
 | 1.2.0 | long `_fkey`, `sort: Desc`, `@relation(map:)` |
 | 1.3.0 | `@relation(onUpdate:)`, in all four non-default actions |
+| 1.4.0 | a reordered compound `@@id` (and one whose derived `_pkey` overflows 63), `ops:` raw and built-in, `@@unique` and `@unique` with `sort: Desc` |
 
 The fourth round was found here rather than reported, and it is the same shape
 for the fourth time: `onUpdate` is in the schema language, absent from the DMMF,

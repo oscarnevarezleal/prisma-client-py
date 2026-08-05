@@ -96,6 +96,17 @@ queries, same rows, same database, Prisma client vs SQLAlchemy Core over the
 tables built from the same schema metadata a Stage 3 compiler would use
 (`sa_vs_engine.py`, sync client, 100 rounds, interleaved and direction-alternated):
 
+> **The include row, and therefore the total, is stale and overstates the win.**
+> The `sa_vs_engine.py` SQLAlchemy path originally returned three unassociated
+> row lists where Prisma returns posts with `author` and `comments` attached, so
+> it timed strictly less work. The grouping and attachment are now inside the
+> timed section and the equivalence check compares relations post by post — but
+> the numbers below predate that, and a re-run in this environment is blocked by
+> the open `lazyActions` read-path bug in the generated lab client. Treat
+> `find_many` + includes, the total, and the 59 % as an upper bound until the
+> lab is rebuilt without `lazyActions` and the benchmark re-run. The other three
+> rows are unaffected: they attach no relations.
+
 | query | Prisma | SQLAlchemy Core | saved |
 | --- | ---: | ---: | ---: |
 | `find_many` + 2 includes, 25 rows | 4.07 ms | 2.22 ms | **45%** |
@@ -113,9 +124,11 @@ Three things worth reading off this table:
 - **`query_raw` is the cleanest measurement here.** The SQL is byte-identical on
   both sides and there is no GraphQL planning to do, so the entire 0.77 ms
   difference is engine transport: the subprocess hop and HTTP round-trip.
-- **Includes recover the least (45%).** A to-many include is where the engine
-  does real work, and where a translation is most likely to lose ground rather
-  than gain it. It is the number to watch as the compiler grows.
+- **Includes recover the least (45%), and even that is generous.** A to-many
+  include is where the engine does real work, and where a translation is most
+  likely to lose ground rather than gain it. The 45% was measured before the
+  SQLAlchemy side grouped and attached the relations, so the real figure is
+  lower. It is the number to watch.
 - **Record construction is not the story.** Building 25 record objects from the
   rows costs 0.12 ms — the step the SQLAlchemy column above does not pay for.
   Adding it back still leaves ~44% saved on the include query.
