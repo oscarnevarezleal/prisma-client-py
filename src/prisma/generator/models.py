@@ -195,6 +195,21 @@ def truncate_identifier(base: str, suffix: str, limit: int = MAX_IDENTIFIER_LENG
     return base[: limit - len(suffix)] + suffix
 
 
+def _index_field_modifiers(field: 'IndexField') -> Dict[str, Any]:
+    """One index member's per-column modifiers, as `@@index`/`@@unique` take them.
+
+    Shared by both so the two can never report a different shape for the same
+    wire object: a `sort:`/`length:`/`ops:` honoured on an index and dropped on a
+    unique is a database that differs from the one Prisma builds.
+    """
+    return {
+        'name': field.name,
+        'sort_order': field.sort_order,
+        'length': field.length,
+        'operator_class': field.operator_class,
+    }
+
+
 def _native_type_for(field: 'Field', model_natives: Dict[str, NativeType]) -> Optional[List[Any]]:
     native = field.native_type or model_natives.get(field.name)
     if native is None:
@@ -332,15 +347,7 @@ def build_schema_metadata(datamodel: 'Datamodel', schema_text: Optional[str] = N
                     'algorithm': index.algorithm,
                     'clustered': index.clustered,
                     'columns': columns,
-                    'fields': [
-                        {
-                            'name': f.name,
-                            'sort_order': f.sort_order,
-                            'length': f.length,
-                            'operator_class': f.operator_class,
-                        }
-                        for f in index.fields
-                    ],
+                    'fields': [_index_field_modifiers(f) for f in index.fields],
                 }
             )
 
@@ -373,6 +380,13 @@ def build_schema_metadata(datamodel: 'Datamodel', schema_text: Optional[str] = N
                     'db_name': index.db_name or truncate_identifier('_'.join([model.table_name, *columns]), '_key'),
                     'fields': unique_fields,
                     'columns': columns,
+                    # `@@unique` takes the same per-column modifiers `@@index`
+                    # does, and Prisma honours them: `@@unique([a, b(sort:
+                    # Desc)])` is `CREATE UNIQUE INDEX ... (a, b DESC)`, and so
+                    # is a field-level `@unique(sort: Desc)`. Reported under
+                    # their own key because `fields` here is the *Prisma* field
+                    # names — the `where={...}` identifier — not index members.
+                    'field_modifiers': [_index_field_modifiers(f) for f in index.fields],
                     'is_defined_on_field': index.is_defined_on_field,
                 }
             )

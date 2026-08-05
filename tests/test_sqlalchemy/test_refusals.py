@@ -13,12 +13,18 @@ would reject `Json` on SQLite before the generator ever ran.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
 import pytest
 import sqlalchemy as sa
 
 from prisma.sa import build_metadata
+from prisma.sa._build import (
+    IndexPrefixLengthError,
+    SortedOperatorClassError,
+    UnknownOperatorClassError,
+)
 from prisma.sa._types import SUPPORTED_PROVIDERS, UnsupportedProviderError
 
 
@@ -162,6 +168,151 @@ def test_boolean_literal_defaults(value: bool, expected: str) -> None:
         'postgresql',
     )
     assert server_default(built, 'Thing', 'flag') == expected
+
+
+# -- index field modifiers ----------------------------------------------------
+#
+# `length:` cannot be built at all here and the built-in `ops:` names are not
+# database identifiers, so both have a tempting silent answer: drop the modifier
+# and build the index anyway. That index has the right name, passes an Alembic
+# diff, and is not the one the schema asked for.
+
+
+def index_field(name: str = 'slug', **overrides: Any) -> Dict[str, Any]:
+    base: Dict[str, Any] = {'name': name, 'sort_order': None, 'length': None, 'operator_class': None}
+    base.update(overrides)
+    return base
+
+
+def indexed_schema(**modifiers: Any) -> Dict[str, Any]:
+    """One model, one `@@index([slug])` carrying the given modifiers."""
+    return {
+        'Thing': model(
+            {'id': field(), 'slug': field(column='slug', is_id=False)},
+            indexes=[
+                {
+                    'name': 'Thing_slug_idx',
+                    'is_named': False,
+                    'type': 'normal',
+                    'algorithm': None,
+                    'clustered': None,
+                    'columns': ['slug'],
+                    'fields': [index_field(**modifiers)],
+                }
+            ],
+        )
+    }
+
+
+def unique_schema(**modifiers: Any) -> Dict[str, Any]:
+    """The same, as a `@@unique`, which takes the same modifiers."""
+    return {
+        'Thing': model(
+            {'id': field(), 'slug': field(column='slug', is_id=False)},
+            uniques=[
+                {
+                    'name': 'slug',
+                    'db_name': 'Thing_slug_key',
+                    'fields': ['slug'],
+                    'columns': ['slug'],
+                    'field_modifiers': [index_field(**modifiers)],
+                    'is_defined_on_field': True,
+                }
+            ],
+        )
+    }
+
+
+@pytest.mark.parametrize('build_schema', [indexed_schema, unique_schema])
+def test_index_prefix_length_refuses(build_schema: Any) -> None:
+    """MySQL's `@@index([slug(length: 10)])`, which PostgreSQL cannot express.
+
+    Prisma rejects the annotation on this provider outright — "The length
+    argument is not supported in an index definition with the current
+    connector", verified against 5.19 — so there is no PostgreSQL index that
+    corresponds to it, and indexing the whole value instead indexes something
+    else.
+    """
+    with pytest.raises(IndexPrefixLengthError) as exc:
+        build_metadata(build_schema(length=10), {}, 'postgresql')
+
+    assert exc.value.column == 'slug'
+    assert exc.value.length == 10
+    assert 'MySQL' in str(exc.value)
+
+
+def test_unknown_built_in_operator_class_refuses() -> None:
+    """A Prisma release adding an operator class must not reach the database.
+
+    `USING btree (slug HypotheticalOps)` is not an index PostgreSQL will build;
+    the name has to be translated, and the translation is not derivable.
+    """
+    with pytest.raises(UnknownOperatorClassError) as exc:
+        build_metadata(indexed_schema(operator_class='HypotheticalOps'), {}, 'postgresql')
+
+    assert exc.value.operator_class == 'HypotheticalOps'
+    assert exc.value.index == 'Thing_slug_idx'
+
+
+def test_raw_operator_class_is_passed_through_unchanged() -> None:
+    """`ops: raw(...)` is already the database's own spelling.
+
+    Including extension-provided classes, which no table here could list:
+    `gin_trgm_ops` exists only where `pg_trgm` is installed.
+    """
+    built = build_metadata(indexed_schema(operator_class='gin_trgm_ops'), {}, 'postgresql')
+    (index,) = built.tables['Thing'].indexes
+    assert index.dialect_options['postgresql']['ops'] == {'slug': 'gin_trgm_ops'}
+
+
+def test_operator_class_on_a_descending_member_refuses() -> None:
+    """Prisma builds `(slug text_pattern_ops DESC)`; SQLAlchemy cannot.
+
+    `postgresql_ops` is appended *after* the compiled expression, so the pair
+    would render in the wrong order — and in practice not at all, because the
+    lookup is keyed on a plain column and a `.desc()` expression carries no such
+    key. The index would silently lose its operator class.
+    """
+    with pytest.raises(SortedOperatorClassError) as exc:
+        build_metadata(indexed_schema(sort_order='Desc', operator_class='text_pattern_ops'), {}, 'postgresql')
+
+    assert exc.value.operator_class == 'text_pattern_ops'
+    assert 'sort: Desc' in str(exc.value)
+
+
+@pytest.mark.parametrize('error', [IndexPrefixLengthError, UnknownOperatorClassError, SortedOperatorClassError])
+def test_index_refusals_are_not_implemented_errors(error: type) -> None:
+    """Catchable without importing our exceptions, like `UnsupportedProviderError`."""
+    assert issubclass(error, NotImplementedError)
+
+
+def test_operator_class_table_is_measured_not_guessed() -> None:
+    """The two halves of the mapping have distinct, checkable shapes.
+
+    Prisma's names are PascalCase and PostgreSQL's are lower snake case, which is
+    what lets `raw(...)` be told apart from a built-in at all. A key that is not
+    PascalCase would be unreachable; a value that is not an identifier would be a
+    syntax error in the emitted DDL.
+    """
+    from prisma.sa._build import _OPERATOR_CLASSES, _BUILT_IN_OPERATOR_CLASS
+
+    assert _OPERATOR_CLASSES
+    for name, operator_class in _OPERATOR_CLASSES.items():
+        assert _BUILT_IN_OPERATOR_CLASS.match(name), name
+        assert re.fullmatch(r'[a-z][a-z0-9_]*_ops', operator_class), operator_class
+
+
+def test_metadata_without_unique_modifiers_still_builds() -> None:
+    """A client generated before `@@unique` modifiers were reported has no key.
+
+    The absent key has to mean "no modifiers", or upgrading `prisma.sa` without
+    regenerating raises on every schema that has a unique constraint.
+    """
+    schema = unique_schema()
+    del schema['Thing']['uniques'][0]['field_modifiers']
+
+    built = build_metadata(schema, {}, 'postgresql')
+    assert [index.name for index in built.tables['Thing'].indexes] == ['Thing_slug_key']
 
 
 # -- referential actions ------------------------------------------------------

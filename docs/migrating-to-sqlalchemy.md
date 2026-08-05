@@ -112,12 +112,12 @@ run also lists every call site individually):
 ```
 prisma py sqlalchemy doctor
 runbook: docs/prisma-to-sqlalchemy-runbook.md — §4.1 is the verified list, §5 is the STOP list
-prisma.sa 1.3.0
+prisma.sa 1.4.0
 
 Scope check (§0)
   provider is PostgreSQL           pass     postgresql
-  relationMode is not "prisma"     pass     absent
-  @db.* annotations                         Decimal x1, SmallInt x1, Timestamptz x1, Uuid x9, VarChar x1
+  relationMode                     pass     absent
+  @db.* annotations                         Decimal x1, SmallInt x1, Timestamptz x1, Uuid x17, VarChar x1
 
 Schema (build_metadata)
   10 models, 12 tables, 1 enums, 2 implicit m2m join tables (postgresql)

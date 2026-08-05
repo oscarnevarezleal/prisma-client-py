@@ -8,10 +8,12 @@ so a regression says *what* broke, not just that something did.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.schema import CreateIndex, CreateTable
 from sqlalchemy.dialects import postgresql
 
 from prisma.sa import build_metadata
@@ -24,6 +26,30 @@ DIALECT: sa.engine.Dialect = postgresql.dialect()  # type: ignore[no-untyped-cal
 
 def table(metadata: sa.MetaData, name: str) -> sa.Table:
     return metadata.tables[name]
+
+
+def index(metadata: sa.MetaData, table_name: str, name: str) -> sa.Index:
+    # a comprehension rather than `next(...)`: the generator never runs to
+    # exhaustion, which leaves a partial branch, and the error is worse
+    matching = [i for i in table(metadata, table_name).indexes if i.name == name]
+    assert matching, f'{table_name} has no index named {name!r}'
+    return matching[0]
+
+
+def index_ddl(metadata: sa.MetaData, table_name: str, name: str) -> str:
+    return str(CreateIndex(index(metadata, table_name, name)).compile(dialect=DIALECT))
+
+
+def operator_classes(metadata: sa.MetaData, table_name: str, name: str) -> Any:
+    return index(metadata, table_name, name).dialect_options['postgresql']['ops']
+
+
+def create_table_ddl(metadata: sa.MetaData, name: str) -> str:
+    return str(CreateTable(table(metadata, name)).compile(dialect=DIALECT))
+
+
+#: `@@map`ped on purpose to a name whose derived `<table>_pkey` overflows 63.
+LONG_TABLE = 'compound_key_order_with_a_deliberately_overlong_table_name_here'
 
 
 # -- tables and columns ------------------------------------------------------
@@ -159,6 +185,90 @@ def test_uniques_are_indexes_not_constraints(metadata: sa.MetaData) -> None:
     }
 
 
+def test_compound_primary_key_follows_the_declared_order(metadata: sa.MetaData) -> None:
+    """`@@id([right, left])` on a model that declares `left` first.
+
+    Prisma emits `PRIMARY KEY ("right", "left")`. The per-column
+    `primary_key=True` flags cannot say that — SQLAlchemy reads the order off the
+    column definitions, which are in DMMF field order — so the key was built the
+    other way round. It enforces the same uniqueness either way, which is why
+    nothing failed; the constraint and its implicit index simply cover the pair
+    in the wrong order.
+    """
+    assert [column.name for column in table(metadata, 'key_order').primary_key] == ['right', 'left']
+    assert 'PRIMARY KEY ("right", "left")' in create_table_ddl(metadata, 'key_order')
+
+
+def test_primary_key_in_field_order_is_left_to_the_server(metadata: sa.MetaData) -> None:
+    """Naming it is a separate decision from stating it.
+
+    Where the declared order is the column order, an unnamed constraint compiles
+    to the same bare `PRIMARY KEY (...)` PostgreSQL already produces, so nothing
+    is named and the emitted models stay free of redundant `__table_args__`.
+    """
+    composite = table(metadata, 'Composite')
+    assert [column.name for column in composite.primary_key] == ['left', 'right']
+    assert composite.primary_key.name is None
+    assert table(metadata, 'accounts').primary_key.name is None
+
+
+def test_reordered_primary_key_is_named(metadata: sa.MetaData) -> None:
+    """The name is how the order survives into a declarative model.
+
+    `_declarative.py` spells a primary key out exactly when it is named and
+    otherwise leaves it to the `primary_key=True` flags — i.e. back to field
+    order — so an unnamed constraint here would fix the Core layer and leave the
+    generated models describing a different database.
+    """
+    assert table(metadata, 'key_order').primary_key.name == 'key_order_pkey'
+
+
+def test_derived_primary_key_name_is_truncated_like_the_server(metadata: sa.MetaData) -> None:
+    """63 characters, keeping the suffix and cutting the base.
+
+    Measured against `prisma db push`: Prisma leaves the naming to PostgreSQL,
+    and PostgreSQL truncates the base. An untruncated name is not merely a
+    different name — SQLAlchemy raises `IdentifierError` before emitting any SQL.
+    """
+    name = table(metadata, LONG_TABLE).primary_key.name
+    assert name == 'compound_key_order_with_a_deliberately_overlong_table_name_pkey'
+    assert len(str(name)) == 63
+
+
+@pytest.mark.parametrize(
+    ('base', 'suffix'),
+    [
+        ('short', '_pkey'),
+        ('compound_key_order_with_a_deliberately_overlong_table_name_here', '_pkey'),
+        ('a' * 58, '_pkey'),
+        ('a' * 59, '_pkey'),
+        ('a' * 200, '_key'),
+    ],
+)
+def test_truncation_agrees_with_the_generators_copy(base: str, suffix: str) -> None:
+    """Everything derived from a long table name has to land on the same 63 characters.
+
+    `prisma.sa` does not import the generator's Pydantic model tree at runtime,
+    so the rule exists twice; two rules that disagree is two constraint names
+    for one constraint.
+    """
+    from prisma.sa._build import _truncate_identifier
+    from prisma.generator.models import truncate_identifier
+
+    assert _truncate_identifier(base, suffix) == truncate_identifier(base, suffix)
+
+
+def test_mapped_primary_key_name_still_wins(generated: dict[str, Any]) -> None:
+    """`@@id(map:)` is a declared name and beats the derived one."""
+    copied = copy.deepcopy(generated)
+    copied['schema']['KeyOrder']['primary_key']['db_name'] = 'key_order_pk'
+
+    built = build_metadata(copied['schema'], copied['enums'], copied['provider'])
+    primary_key = built.tables['key_order'].primary_key
+    assert primary_key.name == 'key_order_pk'
+    assert [column.name for column in primary_key] == ['right', 'left']
+
+
 def test_plain_indexes(metadata: sa.MetaData) -> None:
     accounts = table(metadata, 'accounts')
     (index,) = [i for i in accounts.indexes if not i.unique]
@@ -168,6 +278,92 @@ def test_plain_indexes(metadata: sa.MetaData) -> None:
     entry = table(metadata, 'Entry')
     (derived,) = [i for i in entry.indexes if not i.unique]
     assert derived.name == 'Entry_accountId_idx'  # Prisma's default name
+
+
+# -- index field modifiers ---------------------------------------------------
+#
+# `sort:`, `ops:` and `length:` are per-index-member annotations. Only `sort:`
+# was honoured, and only on `@@index`: `@@unique` went straight from its column
+# list to the index, so a descending unique member was dropped on both the
+# model-level and the field-level form.
+
+
+def test_raw_operator_class_reaches_the_index(metadata: sa.MetaData) -> None:
+    """`ops: raw("text_pattern_ops")` arrives as its literal text.
+
+    Without it the index exists, matches on name, passes an Alembic diff — and
+    never serves the `LIKE 'prefix%'` query it was written for, because under a
+    non-C collation the default operator class cannot.
+    """
+    assert operator_classes(metadata, 'catalog_entries', 'catalog_slug_pattern_idx') == {'slug': 'text_pattern_ops'}
+    assert index_ddl(metadata, 'catalog_entries', 'catalog_slug_pattern_idx').endswith('(slug text_pattern_ops)')
+
+
+def test_built_in_operator_class_is_translated(metadata: sa.MetaData) -> None:
+    """`ops: JsonbPathOps` is a *Prisma* name; the database has never heard of it.
+
+    Passing it through would emit `USING gin (payload JsonbPathOps)`, which is a
+    `CREATE INDEX` failure, so the mapping is measured rather than derived.
+    """
+    assert operator_classes(metadata, 'catalog_entries', 'catalog_payload_path_idx') == {'payload': 'jsonb_path_ops'}
+    ddl = index_ddl(metadata, 'catalog_entries', 'catalog_payload_path_idx')
+    assert ddl.endswith('USING gin (payload jsonb_path_ops)')
+
+
+def test_default_operator_class_is_translated_too(metadata: sa.MetaData) -> None:
+    """`ArrayOps` is gin's default for an array column.
+
+    Which means `pg_dump` renders the index identically whether it is emitted or
+    dropped — the DDL-equivalence gate cannot see this one at all, and an
+    assertion on the built metadata is the only thing that can.
+    """
+    assert operator_classes(metadata, 'catalog_entries', 'catalog_tags_idx') == {'tags': 'array_ops'}
+
+
+def test_operator_class_applies_to_one_member_of_a_composite(metadata: sa.MetaData) -> None:
+    """...and an explicit `sort: Asc` is not the descending case."""
+    assert operator_classes(metadata, 'catalog_entries', 'catalog_title_code_idx') == {'title': 'text_pattern_ops'}
+    ddl = index_ddl(metadata, 'catalog_entries', 'catalog_title_code_idx')
+    assert ddl.endswith('(title text_pattern_ops, code)')
+
+
+def test_indexes_without_modifiers_carry_no_operator_classes(metadata: sa.MetaData) -> None:
+    """Set only where a modifier asked for it.
+
+    `dialect_kwargs` is what `_declarative.py` renders an index's options from,
+    so an unconditional empty dict would put `postgresql_ops={}` on every index
+    in every emitted model.
+    """
+    assert operator_classes(metadata, 'accounts', 'account_email_created_idx') == {}
+    assert dict(index(metadata, 'accounts', 'account_email_created_idx').dialect_kwargs) == {}
+    assert dict(index(metadata, 'catalog_entries', 'catalog_slug_pattern_idx').dialect_kwargs) == {
+        'postgresql_ops': {'slug': 'text_pattern_ops'}
+    }
+
+
+def test_unique_honours_sort_order(metadata: sa.MetaData) -> None:
+    """`@@unique([code, seq(sort: Desc)])` is `CREATE UNIQUE INDEX ... (code, seq DESC)`.
+
+    Verified against `prisma db push`. The uniques path used `columns` directly,
+    so every modifier on a unique was dropped.
+    """
+    ddl = index_ddl(metadata, 'catalog_entries', 'catalog_code_seq_key')
+    assert ddl.endswith('(code, seq DESC)')
+    assert ddl.startswith('CREATE UNIQUE INDEX')
+
+
+def test_field_level_unique_honours_sort_order(metadata: sa.MetaData) -> None:
+    """`ref String @unique(sort: Desc)` — the same wire object, one member.
+
+    There is no `@@unique` line to notice here, which is exactly why this half is
+    easy to leave behind.
+    """
+    assert index_ddl(metadata, 'ledgers', 'ledgers_ref_key').endswith('(ref DESC)')
+
+
+def test_existing_uniques_are_unaffected(metadata: sa.MetaData) -> None:
+    """An unsorted unique still compiles to a plain ascending index."""
+    assert index_ddl(metadata, 'accounts', 'accounts_url_slug_role_key').endswith('(url_slug, role)')
 
 
 # -- foreign keys ------------------------------------------------------------

@@ -23,7 +23,7 @@ from typing import Any, Dict, Iterator, Optional, cast
 
 import pytest
 
-from prisma._schema import RelationSchema, _RelationCommon
+from prisma._schema import UniqueSchema, RelationSchema, IndexFieldSchema, _RelationCommon
 from prisma.generator import models as generator_models
 from prisma.generator.models import (
     Datamodel,
@@ -79,6 +79,19 @@ def test_compound_primary_key_keeps_field_order(schema: Dict[str, Any]) -> None:
     assert pk['fields'] == ['left', 'right']
     assert pk['columns'] == ['left', 'right']
     assert pk['name'] == 'left_right'
+
+
+def test_compound_primary_key_reports_the_declared_order(schema: Dict[str, Any]) -> None:
+    """`@@id([right, left])` on a model that declares `left` first.
+
+    Prisma builds `PRIMARY KEY ("right", "left")`, so the declared order is the
+    physical one. `Composite` above declares the two in the same order, which is
+    why it cannot tell a reader that follows field order from one that does not.
+    """
+    pk = schema['KeyOrder']['primary_key']
+    assert pk['fields'] == ['right', 'left']
+    assert pk['columns'] == ['right', 'left']
+    assert list(schema['KeyOrder']['fields'])[:2] == ['left', 'right']
 
 
 def test_primary_key_db_name_is_not_guessed(schema: Dict[str, Any]) -> None:
@@ -531,6 +544,52 @@ def test_relation_payload_matches_its_typed_view(schema: Dict[str, Any]) -> None
             where = f'{model}.{name}'
             assert not set(_RelationCommon.__annotations__) - set(relation), where
             assert not set(relation) - set(RelationSchema.__annotations__), where
+
+
+def test_unique_payload_matches_its_typed_view(schema: Dict[str, Any]) -> None:
+    """`prisma._schema.UniqueSchema` is the only description consumers read.
+
+    The same both-directions check the relations get above: a key added to the
+    payload and not the typed view is a modifier nobody knows to read, which is
+    how `@@unique([a, b(sort: Desc)])` reached the database as `(a, b)`.
+    """
+    for model, spec in schema.items():
+        for unique in spec['uniques']:
+            where = f'{model}.{unique["name"]}'
+            assert set(UniqueSchema.__annotations__) == set(unique), where
+            for modifier in unique['field_modifiers']:
+                assert set(IndexFieldSchema.__annotations__) == set(modifier), where
+
+
+def test_unique_field_modifiers_are_reported(schema: Dict[str, Any]) -> None:
+    """`@@unique` takes `sort:` and Prisma honours it, per `prisma db push`.
+
+    Reported apart from `fields`, which is the *Prisma* field names — the key a
+    `where={...}` uses — and not index members.
+    """
+    unique = _unique_named(schema, 'Catalog', 'code_seq')
+    assert unique['columns'] == ['code', 'seq']
+    assert [f['sort_order'] for f in unique['field_modifiers']] == [None, 'desc']
+
+    # ...and a field-level `@unique(sort: Desc)`, which is the same wire object
+    field_level = _unique_named(schema, 'Ledger', 'ref')
+    assert field_level['is_defined_on_field'] is True
+    assert [f['sort_order'] for f in field_level['field_modifiers']] == ['desc']
+
+
+def test_index_operator_classes_are_reported(schema: Dict[str, Any]) -> None:
+    """`ops: raw(...)` and a built-in arrive in the same field, spelled differently.
+
+    Nothing downstream can tell them apart by position, so the shape of the value
+    is the only signal: Prisma's own names are PascalCase, PostgreSQL's are lower
+    snake case.
+    """
+    by_name = {index['name']: index for index in schema['Catalog']['indexes']}
+    assert [f['operator_class'] for f in by_name['catalog_slug_pattern_idx']['fields']] == ['text_pattern_ops']
+    assert [f['operator_class'] for f in by_name['catalog_payload_path_idx']['fields']] == ['JsonbPathOps']
+    assert [f['operator_class'] for f in by_name['catalog_title_code_idx']['fields']] == ['text_pattern_ops', None]
+    # lower case on the wire, unlike the schema language's `Asc`/`Desc`
+    assert [f['sort_order'] for f in by_name['catalog_title_code_idx']['fields']] == ['asc', None]
 
 
 def test_literal_round_trips(schema: Dict[str, Any]) -> None:

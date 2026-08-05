@@ -159,6 +159,26 @@ def test_reference_schema_covers_the_hard_shapes(generated: Dict[str, Any]) -> N
         name for spec in schema.values() for name, field in spec['fields'].items() if field['column'] != name
     ], '@map'
     assert [spec for spec in schema.values() if len(spec['primary_key']['columns']) > 1], '@@id'
+    # ...and one whose declared order is *not* the field order, which is the
+    # only shape where the column flags cannot express the key
+    assert [
+        spec
+        for spec in schema.values()
+        if spec['primary_key']['columns']
+        != [f['column'] for f in spec['fields'].values() if f['column'] in set(spec['primary_key']['columns'])]
+    ], 'reordered @@id'
+    indexes = [index for spec in schema.values() for index in spec['indexes']]
+    assert [
+        field for index in indexes for field in index['fields'] if field['operator_class']
+    ], 'index operator classes'
+    assert [field for index in indexes for field in index['fields'] if field['sort_order']], 'index sort order'
+    assert [
+        field
+        for spec in schema.values()
+        for unique in spec['uniques']
+        for field in unique['field_modifiers']
+        if field['sort_order']
+    ], 'unique sort order'
     assert [
         rel for spec in schema.values() for rel in spec['relations'].values() if rel.get('join_ambiguous')
     ], 'self-referential m2m'

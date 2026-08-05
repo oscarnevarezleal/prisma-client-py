@@ -194,6 +194,13 @@ class UniqueSchema(TypedDict):
     db_name: str
     fields: List[str]
     columns: List[str]
+    #: parallel to ``columns``, one entry per index member --- the same shape
+    #: ``IndexSchema.fields`` carries, because a unique takes the same per-column
+    #: modifiers. ``@@unique([a, b(sort: Desc)])`` and a field-level
+    #: ``@unique(sort: Desc)`` are both ``CREATE UNIQUE INDEX ... (b DESC)``;
+    #: dropping the direction silently builds a different index. Kept apart from
+    #: ``fields`` above, which is the *Prisma* field names.
+    field_modifiers: List['IndexFieldSchema']
     #: True when the constraint came from a field-level ``@unique`` rather than
     #: a model-level ``@@unique``. A single-column ``@@unique`` is otherwise
     #: indistinguishable from ``@unique``, and only the latter is addressable as

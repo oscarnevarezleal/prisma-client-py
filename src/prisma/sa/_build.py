@@ -16,14 +16,22 @@ server defaults.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional
+import re
+from typing import Any, Dict, List, Tuple, Mapping, Optional
 
 import sqlalchemy as sa
 from sqlalchemy import event
 
 from ._types import enum_type, array_type, scalar_type, check_provider
 
-__all__ = ('build_metadata', 'JOIN_LEFT', 'JOIN_RIGHT')
+__all__ = (
+    'build_metadata',
+    'JOIN_LEFT',
+    'JOIN_RIGHT',
+    'IndexPrefixLengthError',
+    'UnknownOperatorClassError',
+    'SortedOperatorClassError',
+)
 
 #: Column names Prisma gives the two sides of an implicit m2m join table.
 JOIN_LEFT = 'A'
@@ -41,6 +49,151 @@ _REFERENTIAL_ACTIONS = {
     'SetNull': 'SET NULL',
     'SetDefault': 'SET DEFAULT',
 }
+
+#: PostgreSQL's `NAMEDATALEN - 1`, and what both Prisma and the server truncate
+#: derived constraint names to.
+_MAX_IDENTIFIER_LENGTH = 63
+
+#: Prisma's built-in operator class names -> the PostgreSQL operator class.
+#:
+#: Measured, not transcribed: every name Prisma 5.19 accepts on PostgreSQL was
+#: pushed with `prisma db push` and the resulting `pg_opclass.opcname` read back
+#: out of the catalog. That matters because the transformation is not the
+#: regular one it looks like — `Int4MinMaxOps` is `int4_minmax_ops`, not
+#: `int4_min_max_ops`, and `VarBitMinMaxOps` is `varbit_…`, not `var_bit_…`.
+#: `TextMinMaxMultiOps` is absent because Prisma rejects it; the schema does not
+#: compile.
+_OPERATOR_CLASSES = {
+    # gist / gin / spgist
+    'InetOps': 'inet_ops',
+    'ArrayOps': 'array_ops',
+    'JsonbOps': 'jsonb_ops',
+    'JsonbPathOps': 'jsonb_path_ops',
+    'TextOps': 'text_ops',
+    # brin
+    'BitMinMaxOps': 'bit_minmax_ops',
+    'VarBitMinMaxOps': 'varbit_minmax_ops',
+    'BpcharBloomOps': 'bpchar_bloom_ops',
+    'BpcharMinMaxOps': 'bpchar_minmax_ops',
+    'ByteaBloomOps': 'bytea_bloom_ops',
+    'ByteaMinMaxOps': 'bytea_minmax_ops',
+    'DateBloomOps': 'date_bloom_ops',
+    'DateMinMaxOps': 'date_minmax_ops',
+    'DateMinMaxMultiOps': 'date_minmax_multi_ops',
+    'Float4BloomOps': 'float4_bloom_ops',
+    'Float4MinMaxOps': 'float4_minmax_ops',
+    'Float4MinMaxMultiOps': 'float4_minmax_multi_ops',
+    'Float8BloomOps': 'float8_bloom_ops',
+    'Float8MinMaxOps': 'float8_minmax_ops',
+    'Float8MinMaxMultiOps': 'float8_minmax_multi_ops',
+    'InetInclusionOps': 'inet_inclusion_ops',
+    'InetBloomOps': 'inet_bloom_ops',
+    'InetMinMaxOps': 'inet_minmax_ops',
+    'InetMinMaxMultiOps': 'inet_minmax_multi_ops',
+    'Int2BloomOps': 'int2_bloom_ops',
+    'Int2MinMaxOps': 'int2_minmax_ops',
+    'Int2MinMaxMultiOps': 'int2_minmax_multi_ops',
+    'Int4BloomOps': 'int4_bloom_ops',
+    'Int4MinMaxOps': 'int4_minmax_ops',
+    'Int4MinMaxMultiOps': 'int4_minmax_multi_ops',
+    'Int8BloomOps': 'int8_bloom_ops',
+    'Int8MinMaxOps': 'int8_minmax_ops',
+    'Int8MinMaxMultiOps': 'int8_minmax_multi_ops',
+    'NumericBloomOps': 'numeric_bloom_ops',
+    'NumericMinMaxOps': 'numeric_minmax_ops',
+    'NumericMinMaxMultiOps': 'numeric_minmax_multi_ops',
+    'OidBloomOps': 'oid_bloom_ops',
+    'OidMinMaxOps': 'oid_minmax_ops',
+    'OidMinMaxMultiOps': 'oid_minmax_multi_ops',
+    'TextBloomOps': 'text_bloom_ops',
+    'TextMinMaxOps': 'text_minmax_ops',
+    'TimestampBloomOps': 'timestamp_bloom_ops',
+    'TimestampMinMaxOps': 'timestamp_minmax_ops',
+    'TimestampMinMaxMultiOps': 'timestamp_minmax_multi_ops',
+    'TimestampTzBloomOps': 'timestamptz_bloom_ops',
+    'TimestampTzMinMaxOps': 'timestamptz_minmax_ops',
+    'TimestampTzMinMaxMultiOps': 'timestamptz_minmax_multi_ops',
+    'TimeBloomOps': 'time_bloom_ops',
+    'TimeMinMaxOps': 'time_minmax_ops',
+    'TimeMinMaxMultiOps': 'time_minmax_multi_ops',
+    'TimeTzBloomOps': 'timetz_bloom_ops',
+    'TimeTzMinMaxOps': 'timetz_minmax_ops',
+    'TimeTzMinMaxMultiOps': 'timetz_minmax_multi_ops',
+    'UuidBloomOps': 'uuid_bloom_ops',
+    'UuidMinMaxOps': 'uuid_minmax_ops',
+    'UuidMinMaxMultiOps': 'uuid_minmax_multi_ops',
+}
+
+#: What a Prisma *built-in* operator class name looks like. `ops: raw("...")`
+#: arrives on the wire in the same field and is indistinguishable by position —
+#: the raw text is passed straight through — so the two are told apart by shape.
+#: Every built-in Prisma defines matches this and no PostgreSQL operator class
+#: name does; they are lower snake case (`text_pattern_ops`, `gin_trgm_ops`).
+_BUILT_IN_OPERATOR_CLASS = re.compile(r'^[A-Z][A-Za-z0-9]*Ops$')
+
+
+class IndexPrefixLengthError(NotImplementedError):
+    """`@@index([col(length: n)])`, which PostgreSQL has no equivalent for.
+
+    Prisma rejects the annotation outright on this provider — "The length
+    argument is not supported in an index definition with the current
+    connector", verified against 5.19 — so a payload carrying one did not come
+    from a PostgreSQL schema, and the index it asks for cannot be built.
+    """
+
+    def __init__(self, index: str, column: str, length: int) -> None:
+        self.index = index
+        self.column = column
+        self.length = length
+        super().__init__(
+            f'Index {index!r} asks for a prefix length of {length} on column {column!r}.\n'
+            '  That is a MySQL feature; PostgreSQL indexes the whole value and Prisma rejects\n'
+            '  `length:` on this provider, so there is no index to build that matches.\n'
+            '  Building one without the prefix would silently index something else.'
+        )
+
+
+class UnknownOperatorClassError(NotImplementedError):
+    """A built-in `ops:` name with no measured PostgreSQL operator class.
+
+    Passing the Prisma name through would emit `USING btree (col SomeNewOps)`,
+    which is a `CREATE INDEX` failure at best and the wrong operator class at
+    worst.
+    """
+
+    def __init__(self, index: str, column: str, operator_class: str) -> None:
+        self.index = index
+        self.column = column
+        self.operator_class = operator_class
+        super().__init__(
+            f'Index {index!r} uses the Prisma operator class {operator_class!r} on column {column!r},\n'
+            '  which has no verified PostgreSQL equivalent here.\n'
+            '  Add it to prisma/sa/_build.py, read back out of `pg_opclass` after a real\n'
+            '  `prisma db push` — the name is not derivable from the Prisma one.'
+        )
+
+
+class SortedOperatorClassError(NotImplementedError):
+    """`ops:` and `sort: Desc` on the same index member.
+
+    Prisma emits `(col opclass DESC)`. SQLAlchemy's `postgresql_ops` appends the
+    operator class *after* the compiled expression, so the pair would render as
+    `(col DESC opclass)` — and in practice not at all, because the lookup is
+    keyed on a plain column and a `.desc()` expression carries no such key. The
+    index would be built silently without its operator class.
+    """
+
+    def __init__(self, index: str, column: str, operator_class: str) -> None:
+        self.index = index
+        self.column = column
+        self.operator_class = operator_class
+        super().__init__(
+            f'Index {index!r} declares both `sort: Desc` and an operator class '
+            f'({operator_class!r}) on column {column!r}.\n'
+            '  Prisma builds `(col opclass DESC)`; SQLAlchemy cannot express that ordering —\n'
+            '  `postgresql_ops` is appended after the expression and is dropped entirely on a\n'
+            '  descending one, which builds a different index without saying so.'
+        )
 
 
 def build_metadata(
@@ -97,15 +250,9 @@ def _build_table(
     for name, field in spec['fields'].items():
         args.append(_build_column(field, provider, enum_types, md, is_primary_key=name in primary_key))
 
-    if spec['primary_key']['db_name'] is not None:
-        # `@@id(map: "...")`. Left to the dialect otherwise, which produces the
-        # same `<table>_pkey` Prisma does on PostgreSQL.
-        args.append(
-            sa.PrimaryKeyConstraint(
-                *spec['primary_key']['columns'],
-                name=spec['primary_key']['db_name'],
-            )
-        )
+    primary_key_constraint = _primary_key_constraint(spec)
+    if primary_key_constraint is not None:
+        args.append(primary_key_constraint)
 
     table = sa.Table(spec['table'], md, *args)
 
@@ -114,40 +261,174 @@ def _build_table(
     # unique constraint would be the more idiomatic choice. Alembic tells the
     # two apart, so a constraint here means a drop-and-recreate on every
     # migration.
+    #
+    # A unique takes the same per-column modifiers an index does — `@@unique([a,
+    # b(sort: Desc)])` and a field-level `@unique(sort: Desc)` both build a
+    # descending member — so both go through the same builder. `.get` for the
+    # modifiers: a client generated before they were reported carries no such
+    # key, and no modifiers is what every such schema meant.
     for unique in spec['uniques']:
-        sa.Index(unique['db_name'], *[table.c[column] for column in unique['columns']], unique=True)
+        _build_index(
+            table,
+            unique['db_name'],
+            unique['columns'],
+            unique.get('field_modifiers') or [],
+            provider,
+            unique=True,
+        )
 
     for index in spec['indexes']:
         kwargs: Dict[str, Any] = {}
         if index['algorithm']:
             kwargs[f'{provider}_using'] = index['algorithm'].lower()
-        sa.Index(index['name'], *_index_expressions(table, index), **kwargs)
+        _build_index(table, index['name'], index['columns'], index['fields'], provider, **kwargs)
 
     _own_sequences(table, spec)
     return table
 
 
-def _index_expressions(table: sa.Table, index: Mapping[str, Any]) -> List[Any]:
-    """Index columns, carrying `sort: Desc` through as `column.desc()`.
+def _primary_key_constraint(spec: Mapping[str, Any]) -> Optional[sa.PrimaryKeyConstraint]:
+    """The primary key, stated explicitly so its column *order* is ours.
 
-    Dropping the direction is nearly free on a single-column index — PostgreSQL
-    scans backwards — but not on a composite one: `(a ASC, b ASC)` read backwards
-    is `(a DESC, b DESC)`, which serves neither `ORDER BY a, b DESC` nor
-    `ORDER BY a DESC, b`. The index the schema asked for cannot be substituted by
-    the one that would be built, so the query falls back to a sort node. Silent
-    to the application, visible later as a slow query.
+    `@@id([right, left])` on a model that declares `left` first is
+    `PRIMARY KEY ("right", "left")` — verified against `prisma db push`. The
+    per-column `primary_key=True` flags cannot express that: SQLAlchemy takes
+    the order from the column definitions, which is DMMF field order, and the
+    key it builds still works while indexing the pair the other way round.
+
+    Naming it is a separate question from stating it. An unnamed constraint
+    compiles to a bare `PRIMARY KEY (...)`, which is what PostgreSQL already
+    gets, so the usual case adds no name: `@@id(map:)` when the schema mapped
+    one, and otherwise a name only when the declared order differs from the
+    column order. That last case needs one because a name is the only part of
+    the constraint that survives into a declarative model — `_declarative.py`
+    spells the constraint out exactly when it is named, and otherwise leaves the
+    key to the `primary_key=True` flags, i.e. back to field order.
+    """
+    primary_key = spec['primary_key']
+    columns = list(primary_key['columns'])
+    if not columns:
+        # Prisma allows a model identified only by a unique constraint.
+        return None
+
+    in_field_order = [field['column'] for field in spec['fields'].values() if field['column'] in set(columns)]
+    name = primary_key['db_name']
+    if name is None and columns != in_field_order:
+        name = _default_primary_key_name(spec['table'])
+
+    return sa.PrimaryKeyConstraint(*columns, name=name)
+
+
+def _default_primary_key_name(table: str) -> str:
+    """`<table>_pkey`, truncated the way the server truncates it.
+
+    PostgreSQL-specific, which is why the generator refuses to resolve it —
+    MySQL calls the constraint `PRIMARY`. It is resolvable here because
+    `check_provider` has already run and PostgreSQL is the only provider this
+    builds for. Measured against an 82-character table name: `prisma db push`
+    leaves the naming to the server and the server keeps the suffix and cuts the
+    base, which is also Prisma's own rule for the names it derives.
+    """
+    return _truncate_identifier(table, '_pkey')
+
+
+def _truncate_identifier(base: str, suffix: str) -> str:
+    """Prisma's rule, and the server's: keep the suffix, cut the base.
+
+    Deliberately not imported from `prisma.generator.models`, which is the
+    generator's Pydantic model tree and has no business being loaded at runtime
+    by a client that only wants a `MetaData`. The two copies are pinned against
+    each other in `test_build.py`, since the whole point of the rule is that
+    everything derived from a long name agrees on the same 63 characters.
+    """
+    name = f'{base}{suffix}'
+    if len(name) <= _MAX_IDENTIFIER_LENGTH:
+        return name
+    return base[: _MAX_IDENTIFIER_LENGTH - len(suffix)] + suffix
+
+
+def _build_index(
+    table: sa.Table,
+    name: str,
+    columns: List[str],
+    fields: List[Mapping[str, Any]],
+    provider: str,
+    **kwargs: Any,
+) -> sa.Index:
+    expressions, operator_classes = _index_expressions(table, name, columns, fields)
+    if operator_classes:
+        kwargs[f'{provider}_ops'] = operator_classes
+    return sa.Index(name, *expressions, **kwargs)
+
+
+def _index_expressions(
+    table: sa.Table,
+    name: str,
+    columns: List[str],
+    fields: List[Mapping[str, Any]],
+) -> Tuple[List[Any], Dict[str, str]]:
+    """Index members, and the operator classes to attach to them.
+
+    `sort: Desc` becomes `column.desc()`. Dropping the direction is nearly free
+    on a single-column index — PostgreSQL scans backwards — but not on a
+    composite one: `(a ASC, b ASC)` read backwards is `(a DESC, b DESC)`, which
+    serves neither `ORDER BY a, b DESC` nor `ORDER BY a DESC, b`. The index the
+    schema asked for cannot be substituted by the one that would be built, so the
+    query falls back to a sort node. Silent to the application, visible later as
+    a slow query.
+
+    `ops:` becomes an entry in `postgresql_ops`, which is a different kind of
+    wrong to get wrong: `@@index([slug(ops: raw("text_pattern_ops"))])` is what
+    makes an index usable by `LIKE 'prefix%'` under a non-C collation, and
+    without it the index exists, matches on name, and never serves the query it
+    was written for. `length:` has no PostgreSQL equivalent at all and raises.
     """
     # `columns` and `fields` are built together and stay parallel: one entry per
     # index member, in declaration order.
-    orders = [(field.get('sort_order') or '').lower() for field in index['fields']]
     expressions: List[Any] = []
+    operator_classes: Dict[str, str] = {}
 
-    for position, column_name in enumerate(index['columns']):
+    for position, column_name in enumerate(columns):
+        modifiers: Mapping[str, Any] = fields[position] if position < len(fields) else {}
         column = table.c[column_name]
-        descending = position < len(orders) and orders[position] == 'desc'
+
+        length = modifiers.get('length')
+        if length is not None:
+            raise IndexPrefixLengthError(name, column_name, length)
+
+        descending = (modifiers.get('sort_order') or '').lower() == 'desc'
+        operator_class = _operator_class(name, column_name, modifiers.get('operator_class'))
+        if operator_class is not None:
+            if descending:
+                raise SortedOperatorClassError(name, column_name, operator_class)
+            # keyed on `Column.key`, which is what the PostgreSQL dialect looks
+            # the operator class up by when it compiles the index
+            operator_classes[column.key] = operator_class
+
         expressions.append(column.desc() if descending else column)
 
-    return expressions
+    return expressions, operator_classes
+
+
+def _operator_class(index: str, column: str, declared: Optional[str]) -> Optional[str]:
+    """The PostgreSQL operator class for one index member, or None.
+
+    Prisma sends `ops: raw("text_pattern_ops")` and `ops: JsonbPathOps` in the
+    same field: the raw form arrives as its literal text, the built-in one as
+    Prisma's own name, which is not a PostgreSQL identifier and has to be
+    translated. Anything shaped like a built-in but absent from the measured
+    table is refused rather than passed through, because passing it through
+    emits SQL naming an operator class that does not exist.
+    """
+    if declared is None:
+        return None
+    if not _BUILT_IN_OPERATOR_CLASS.match(declared):
+        # `raw("...")`, which is already the database's own spelling
+        return declared
+    try:
+        return _OPERATOR_CLASSES[declared]
+    except KeyError:
+        raise UnknownOperatorClassError(index, column, declared) from None
 
 
 def _build_column(

@@ -205,6 +205,91 @@ model MaintenanceLock {
   @@map("maintenance_locks")
 }
 
+// B9 and B10 came from review rather than from a field report or a failing
+// gate, and neither is an annotation the DMMF withholds: both were reported and
+// then dropped on the way to the DDL. That is the same failure as the eight
+// above with one fewer excuse.
+//
+// B9: a compound `@@id` whose declared order is not the field order. Prisma
+// emits `PRIMARY KEY ("right", "left")`; the per-column `primary_key=True` flags
+// cannot say that, because SQLAlchemy takes the order from the column
+// definitions and those are in DMMF field order. Nothing fails — the key still
+// enforces the same uniqueness — so the only symptom is a constraint and an
+// implicit index covering the pair the other way round. `Composite` above has
+// the same annotation with the orders agreeing, which is exactly why it never
+// caught this.
+model KeyOrder {
+  left  String
+  right String
+  note  String?
+
+  // a foreign key beside the compound key: two constraints on one model, which
+  // is what the emitted `__table_args__` has to hold
+  ledgerId Int?
+  ledger   Ledger? @relation(fields: [ledgerId], references: [id])
+
+  @@id([right, left])
+  @@map("key_order")
+}
+
+// B9 remainder: the same shape on a table whose name makes the derived
+// `<table>_pkey` overflow 63 characters. The constraint has to be named for the
+// order to survive into a declarative model, and a name that is not truncated
+// the way the server truncates it is either a different constraint name or an
+// `IdentifierError` before any SQL is sent — the `_key`/`_fkey` lesson (B3),
+// one namespace over.
+model LongKeyOrder {
+  alpha String
+  beta  String
+  gamma String
+
+  @@id([gamma, alpha, beta])
+  @@map("compound_key_order_with_a_deliberately_overlong_table_name_here")
+}
+
+// B10: index field modifiers other than `sort:`. `ops:` decides which queries an
+// index can serve at all — a `text_pattern_ops` index is what makes `LIKE
+// 'prefix%'` indexable under a non-C collation — and dropping it builds an index
+// that matches on name, passes an Alembic diff, and never serves the query it
+// was written for.
+model Catalog {
+  id      String   @id @default(uuid()) @db.Uuid
+  slug    String
+  title   String
+  code    String
+  seq     Int
+  tags    String[]
+  payload Json
+
+  // `ops: raw(...)`: the operator class arrives as its literal text
+  @@index([slug(ops: raw("text_pattern_ops"))], map: "catalog_slug_pattern_idx")
+  // a *built-in* operator class, which arrives as Prisma's own name and is not
+  // a PostgreSQL identifier at all
+  @@index([payload(ops: JsonbPathOps)], type: Gin, map: "catalog_payload_path_idx")
+  // a built-in whose class is the access method's *default*, so `pg_dump` shows
+  // it either way and only a catalog lookup can tell the two apart
+  @@index([tags(ops: ArrayOps)], type: Gin, map: "catalog_tags_idx")
+  // one member of a composite carrying `ops:`, beside an explicit `sort: Asc`
+  // that must not be read as the descending case
+  @@index([title(ops: raw("text_pattern_ops"), sort: Asc), code], map: "catalog_title_code_idx")
+
+  // `@@unique` takes the same modifiers and was ignoring all of them: the
+  // uniques path used the column list directly
+  @@unique([code, seq(sort: Desc)], map: "catalog_code_seq_key")
+  @@map("catalog_entries")
+}
+
+// ...including on a field-level `@unique`, which is the same wire object with
+// one member and no `@@unique` line to notice.
+model Ledger {
+  id  Int    @id @default(autoincrement())
+  ref String @unique(sort: Desc)
+
+  orders KeyOrder[]
+
+  @@map("ledgers")
+}
+
 model ScheduledMaintenanceWindowRegion {
   id                           String                     @id @default(uuid()) @db.Uuid
   scheduledMaintenanceWindowId String                     @map("scheduled_maintenance_window_id") @db.Uuid
