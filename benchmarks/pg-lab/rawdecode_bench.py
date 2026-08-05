@@ -47,6 +47,14 @@ asyncio.run(main())
 '''
 
 
+def positive_int(value: str) -> int:
+    """argparse type: reject 0 and negatives, which leave the run lists empty."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f'must be >= 1, got {parsed}')
+    return parsed
+
+
 def run(workdir: Path, raw: bool) -> dict[str, float]:
     env = os.environ.copy()
     if raw:
@@ -62,7 +70,7 @@ def run(workdir: Path, raw: bool) -> dict[str, float]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workdir', required=True, help='dir containing the generated `pkg` package')
-    parser.add_argument('--passes', type=int, default=9)
+    parser.add_argument('--passes', type=positive_int, default=9)
     parser.add_argument('--json', default=None)
     args = parser.parse_args()
 

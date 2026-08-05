@@ -12,6 +12,12 @@ Both sides are measured interleaved and in both directions, because sequential
 A/B runs on a shared machine disagreed by 13 percentage points earlier in this
 work.
 
+Both sides also have to *produce the same thing*: the SQLAlchemy side does the
+grouping and attachment an `include=` implies, inside the timed section, and
+the equivalence check compares the attached relations post by post rather than
+a total count. What the SQLAlchemy side still does not do — build record
+objects out of the rows — is measured separately and printed with the results.
+
 Usage:
     BENCH_DATABASE_URL=postgresql://... python sa_vs_engine.py --workdir /tmp/pglab-sa
 """
@@ -46,16 +52,10 @@ def p90_ms(samples: List[float]) -> float:
 
 
 def build_sa_queries(md: sa.MetaData) -> Dict[str, Any]:
-    post = md.tables['Post']
-    user = md.tables['User']
     comment = md.tables['Comment']
+    post = md.tables['Post']
 
     return {
-        'find_many_include': (
-            sa.select(post).order_by(post.c.createdAt.desc()).limit(25),
-            sa.select(user),
-            comment,
-        ),
         'find_unique': sa.select(post).where(post.c.id == 'p1'),
         'count': sa.select(sa.func.count()).select_from(comment).where(comment.c.isHidden.is_(False)),
         'query_raw': sa.text('SELECT id, title FROM "Post" LIMIT 10'),
@@ -69,15 +69,28 @@ def sa_runners(conn: sa.Connection, md: sa.MetaData) -> Dict[str, Callable[[], A
     comment = md.tables['Comment']
 
     def find_many_include() -> Any:
-        # The two-query shape the engine itself uses for a to-many include:
-        # parents first, then children by parent id. Emulating `include` with a
-        # single join would multiply parent rows by child count and need
+        # The three-query shape the engine itself uses for a to-many include:
+        # parents first, then the related rows by key. Emulating `include` with
+        # a single join would multiply parent rows by child count and need
         # de-duplication in Python, which is slower, not faster.
+        #
+        # The grouping and attachment below are inside the timed section on
+        # purpose. `db.post.find_many(include=...)` hands back posts with
+        # `.author` and `.comments` already attached; returning three
+        # unassociated row lists and calling it the same query would time a
+        # strictly smaller piece of work and report the difference as a win.
         parents = conn.execute(sa.select(post).order_by(post.c.createdAt.desc()).limit(25)).mappings().all()
         ids = [row['id'] for row in parents]
-        authors = conn.execute(sa.select(user).where(user.c.id.in_([r['authorId'] for r in parents]))).mappings().all()
+        authors = conn.execute(
+            sa.select(user).where(user.c.id.in_({r['authorId'] for r in parents}))
+        ).mappings().all()
         children = conn.execute(sa.select(comment).where(comment.c.postId.in_(ids))).mappings().all()
-        return parents, authors, children
+
+        by_id = {row['id']: row for row in authors}
+        grouped: Dict[Any, List[Any]] = {pid: [] for pid in ids}
+        for child in children:
+            grouped[child['postId']].append(child)
+        return [dict(row, author=by_id.get(row['authorId']), comments=grouped[row['id']]) for row in parents]
 
     return {
         'find_many_include': find_many_include,
@@ -99,12 +112,30 @@ def prisma_runners(db: Any) -> Dict[str, Callable[[], Any]]:
 
 
 def check_equivalence(prisma: Dict[str, Callable[[], Any]], alchemy: Dict[str, Callable[[], Any]]) -> None:
-    parents, _authors, children = alchemy['find_many_include']()
+    """Assert both sides really produce the same thing, per row and per relation.
+
+    A total comment count matching is not evidence that the includes agree: the
+    same total is reachable from a completely different assignment of comments
+    to posts, and it says nothing at all about the author relation. Compare the
+    attached relations post by post.
+    """
+    rows = alchemy['find_many_include']()
     posts = prisma['find_many_include']()
 
-    assert [p.id for p in posts] == [r['id'] for r in parents], 'find_many_include returned different rows'
     assert len(posts) == 25, f'expected 25 posts, got {len(posts)} — is the database seeded?'
-    assert sum(len(p.comments or []) for p in posts) == len(children), 'include returned a different comment set'
+    assert [p.id for p in posts] == [r['id'] for r in rows], 'find_many_include returned different rows'
+
+    for post, row in zip(posts, rows):
+        prisma_author = post.author.id if post.author is not None else None
+        sa_author = row['author']['id'] if row['author'] is not None else None
+        assert prisma_author == sa_author, f'post {post.id}: author {prisma_author!r} vs {sa_author!r}'
+
+        prisma_comments = sorted(c.id for c in (post.comments or []))
+        sa_comments = sorted(c['id'] for c in row['comments'])
+        assert prisma_comments == sa_comments, f'post {post.id}: comment sets differ'
+
+    total = sum(len(row['comments']) for row in rows)
+    assert total > 0, 'no comments attached on either side — the include is not being exercised'
 
     assert (prisma['find_unique']() is not None) == (alchemy['find_unique']() is not None)
     assert prisma['count']() == alchemy['count']()
@@ -191,26 +222,40 @@ def main() -> None:
     total_sa = sum(r['sqlalchemy_ms'] for r in rows)
     print(f'\ntotal  {total_prisma:.3f}ms -> {total_sa:.3f}ms  ({(1 - total_sa / total_prisma) * 100:.1f}% saved)')
 
-    if args.json:
-        with open(args.json, 'w') as f:
-            json.dump({'rounds': args.rounds, 'queries': rows}, f, indent=1)
-
-    # What the SQLAlchemy column above is *not* paying for. It returns row
-    # mappings; the Prisma client returns record objects. Reporting the SQL time
-    # alone would overstate the win, so measure the missing step explicitly
-    # rather than leaving the reader to guess at it.
+    # What the SQLAlchemy column above is *not* paying for. Both sides now do
+    # the same relational work — `find_many_include` groups the child rows and
+    # attaches them to their parents inside the timed section — but the
+    # SQLAlchemy side still hands back row mappings where Prisma hands back
+    # record objects. Measure that remaining step explicitly rather than
+    # leaving the reader to guess at its size.
     post_model = importlib.import_module(f'{args.package}.models').Post
-    rows = conn.execute(sa.select(md.tables['Post']).limit(25)).mappings().all()
+    sample_rows = conn.execute(sa.select(md.tables['Post']).limit(25)).mappings().all()
     construct: List[float] = []
     for _ in range(args.rounds):
         t = time.perf_counter()
-        [post_model.model_validate(dict(row)) for row in rows]
+        [post_model.model_validate(dict(row)) for row in sample_rows]
         construct.append(time.perf_counter() - t)
+    construct_ms = median_ms(construct)
 
-    print(
-        f'\nnot counted on the SQLAlchemy side: {median_ms(construct):.3f}ms to build '
-        f'{len(rows)} record objects from the rows'
-    )
+    print()
+    print('what the SQLAlchemy column includes and excludes')
+    print('  included: statement compilation, execution, row fetch, and — for find_many_include —')
+    print('            grouping the comments by post and attaching author + comments to each post')
+    print(f'  excluded: record construction. {construct_ms:.3f}ms to build {len(sample_rows)} Post objects')
+    print(f'            from the rows, i.e. {construct_ms / total_sa * 100:.0f}% of the SQLAlchemy total above.')
+    print('  excluded: validation of arbitrary input, and every non-read code path.')
+
+    if args.json:
+        with open(args.json, 'w') as f:
+            json.dump(
+                {
+                    'rounds': args.rounds,
+                    'queries': rows,
+                    'excluded_from_sqlalchemy': {'record_construction_ms': construct_ms, 'rows': len(sample_rows)},
+                },
+                f,
+                indent=1,
+            )
 
     conn.close()
     engine.dispose()

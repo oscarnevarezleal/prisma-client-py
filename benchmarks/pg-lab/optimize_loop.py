@@ -22,7 +22,12 @@ Composite cost = geometric mean of:
 
 Usage:
   BENCH_DATABASE_URL=postgresql://bench:bench@127.0.0.1:5433/bench \
-      python optimize_loop.py --workdir /tmp/pglab --repeats 3
+      python optimize_loop.py --workdir /tmp/pglab --repeats 3 --json phase1.json
+
+  # phase 2 starts from the configuration phase 1 actually settled on, read
+  # out of that run's result file rather than hardcoded here
+  BENCH_DATABASE_URL=... python optimize_loop.py --workdir /tmp/pglab \
+      --phase 2 --phase1-json phase1.json --json phase2.json
 """
 
 from __future__ import annotations
@@ -51,9 +56,41 @@ QUERY_KEYS = [
     'sync_q_query_raw_ms',
 ]
 
+# Every metric `cost()` reads. A workload run that does not report all of them
+# is a failed measurement, not a fast one.
+REQUIRED_KEYS = [
+    'rss_final_mb',
+    'import_async_ms',
+    'import_sync_ms',
+    'async_connect_ms',
+    'sync_connect_ms',
+    *QUERY_KEYS,
+]
+
+
+class MeasurementError(RuntimeError):
+    """A workload process ran but produced no usable measurement."""
+
+
+class GraftError(RuntimeError):
+    """The unified-package graft did not find the generated source it rewrites."""
+
+
+def positive_int(value: str) -> int:
+    """argparse type: reject 0 and negatives, which produce empty run lists."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f'must be >= 1, got {parsed}')
+    return parsed
+
+
 # Phase 2: foundational mechanisms implemented in the fork (no upstream
 # equivalent), tried on top of the phase-1 winner. 'env' entries are runtime
 # switches passed to the workload process; 'options' are generator options.
+#
+# NOTE: the `msgspec-models` rung was added after the recorded run in
+# `results-phase2-2026-08-03.json`, which therefore has four rungs, not five.
+# See the phase-2 section of README.md.
 CANDIDATES_PHASE2: list[dict[str, object]] = [
     {
         'name': 'lazy-actions',
@@ -147,28 +184,81 @@ def generate_variant(workdir: Path, options: dict[str, str], unified: bool) -> t
     # graft: one package, shared models/types, two action+client layers
     uni = workdir / 'pkg_uni'
     shutil.copytree(workdir / 'pkg_async', uni, ignore=shutil.ignore_patterns('__pycache__'))
-    actions = (workdir / 'pkg_sync' / 'actions.py').read_text().replace(
-        'from .client import Prisma', 'from .client_sync import Prisma'
-    )
-    client = (
-        (workdir / 'pkg_sync' / 'client.py')
-        .read_text()
-        # eager layout
-        .replace(
-            'from . import types, models, errors, actions',
+    (uni / 'actions_sync.py').write_text(graft_actions((workdir / 'pkg_sync' / 'actions.py').read_text()))
+    (uni / 'client_sync.py').write_text(graft_client((workdir / 'pkg_sync' / 'client.py').read_text()))
+    return 'pkg_uni.client', 'pkg_uni.client_sync'
+
+
+# The graft rewrites exact lines of generated source, and later ladder
+# candidates change that source (`lazyActions` moves the actions import into
+# `Prisma.__getattr__`). `str.replace` returns its input unchanged when the
+# pattern is absent, so an unmatched pattern would leave the *sync* client
+# importing the *async* actions layer — a package that still imports and still
+# runs, but is no longer the configuration under test. Every rewrite below is
+# therefore checked, and a miss aborts the run instead of quietly moving the
+# baseline.
+
+_ACTIONS_CLIENT_IMPORT = 'from .client import Prisma'
+_CLIENT_EAGER_IMPORT = 'from . import types, models, errors, actions'
+_CLIENT_LAZY_IMPORT = 'from . import actions as _actions'
+
+
+def graft_actions(source: str) -> str:
+    if _ACTIONS_CLIENT_IMPORT not in source:
+        raise GraftError(f'pkg_sync/actions.py: no {_ACTIONS_CLIENT_IMPORT!r} to rewrite')
+    return source.replace(_ACTIONS_CLIENT_IMPORT, 'from .client_sync import Prisma')
+
+
+def graft_client(source: str) -> str:
+    """Point the sync client at `actions_sync`, under either actions layout."""
+    eager = _CLIENT_EAGER_IMPORT in source
+    lazy = _CLIENT_LAZY_IMPORT in source
+    if eager == lazy:
+        raise GraftError(
+            'pkg_sync/client.py: expected exactly one of the eager and lazyActions import layouts, '
+            f'found eager={eager} lazy={lazy} — the client template has changed under the graft'
+        )
+    if eager:
+        return source.replace(
+            _CLIENT_EAGER_IMPORT,
             'from . import types, models, errors\nfrom . import actions_sync as actions',
         )
-        # lazyActions layout: the deferred import inside Prisma.__getattr__
-        .replace('from . import actions as _actions', 'from . import actions_sync as _actions')
-    )
-    (uni / 'actions_sync.py').write_text(actions)
-    (uni / 'client_sync.py').write_text(client)
-    return 'pkg_uni.client', 'pkg_uni.client_sync'
+    # lazyActions layout: the deferred import inside Prisma.__getattr__
+    return source.replace(_CLIENT_LAZY_IMPORT, 'from . import actions_sync as _actions')
+
+
+def parse_workload_output(stdout: str) -> dict[str, float]:
+    """Last stdout line -> metrics, or `MeasurementError`.
+
+    A workload can exit 0 and still be useless: crash after printing, print a
+    traceback, print nothing. Left unchecked those surface as `IndexError` /
+    `JSONDecodeError` / `KeyError` from outside the loop's `CalledProcessError`
+    handler and abort the whole optimization run.
+    """
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        raise MeasurementError('workload wrote nothing to stdout')
+    try:
+        parsed = json.loads(lines[-1])
+    except json.JSONDecodeError as exc:
+        raise MeasurementError(f'last stdout line is not JSON ({exc}): {lines[-1][:200]!r}') from exc
+    if not isinstance(parsed, dict):
+        raise MeasurementError(f'workload emitted {type(parsed).__name__}, expected a JSON object')
+
+    missing = [k for k in REQUIRED_KEYS if k not in parsed]
+    if missing:
+        raise MeasurementError(f'workload output is missing {len(missing)} metric(s): {", ".join(missing)}')
+    bad = [k for k in REQUIRED_KEYS if isinstance(parsed[k], bool) or not isinstance(parsed[k], (int, float))]
+    if bad:
+        raise MeasurementError(f'workload reported non-numeric metric(s): {", ".join(bad)}')
+    return {k: float(v) for k, v in parsed.items() if not isinstance(v, bool) and isinstance(v, (int, float))}
 
 
 def measure(workdir: Path, async_mod: str, sync_mod: str, repeats: int, rounds: int,
             extra_env: dict[str, str] | None = None) -> dict[str, float]:
     """Median of `repeats` fresh-process workload runs (bytecode pre-warmed)."""
+    if repeats < 1:
+        raise MeasurementError(f'repeats must be >= 1, got {repeats}')
     env = os.environ.copy()
     if extra_env:
         env.update(extra_env)
@@ -179,8 +269,10 @@ def measure(workdir: Path, async_mod: str, sync_mod: str, repeats: int, rounds: 
             [sys.executable, str(HERE / 'workload.py'), async_mod, sync_mod, '--rounds', str(rounds)],
             cwd=workdir, env=env,
         )
-        runs.append(json.loads(proc.stdout.strip().splitlines()[-1]))
-    return {k: round(statistics.median(r[k] for r in runs), 2) for k in runs[0]}
+        runs.append(parse_workload_output(proc.stdout))
+    # only keys every run reported; REQUIRED_KEYS are guaranteed to be among them
+    shared = [k for k in runs[0] if all(k in r for r in runs)]
+    return {k: round(statistics.median(r[k] for r in runs), 2) for k in shared}
 
 
 def cost(m: dict[str, float]) -> dict[str, float]:
@@ -198,11 +290,35 @@ def cost(m: dict[str, float]) -> dict[str, float]:
     }
 
 
+def load_phase1_winner(path: Path) -> tuple[dict[str, str], dict[str, str], bool]:
+    """Read the configuration a phase-1 run actually settled on.
+
+    Phase 2 measures mechanisms *on top of* the phase-1 winner, so it has to
+    start from the winner that run produced. Restating it here would go stale
+    the moment the ladder, the threshold or the guardrail changes, and phase 2
+    would then report deltas against a baseline no phase-1 run ever chose.
+    """
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f'--phase1-json {path}: cannot read ({exc})') from exc
+    summary = data.get('summary') if isinstance(data, dict) else None
+    if not isinstance(summary, dict) or 'final_options' not in summary or 'unified' not in summary:
+        raise SystemExit(
+            f'--phase1-json {path}: no usable "summary" object — expected the --json output of a '
+            'phase-1 optimize_loop run'
+        )
+    options = {str(k): str(v) for k, v in dict(summary['final_options']).items()}
+    # phase-1 result files written before `final_env` existed simply have none
+    env = {str(k): str(v) for k, v in dict(summary.get('final_env') or {}).items()}
+    return options, env, bool(summary['unified'])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--workdir', required=True)
-    parser.add_argument('--repeats', type=int, default=3)
-    parser.add_argument('--rounds', type=int, default=20)
+    parser.add_argument('--repeats', type=positive_int, default=3)
+    parser.add_argument('--rounds', type=positive_int, default=20)
     parser.add_argument('--threshold', type=float, default=0.005, help='min relative improvement to accept')
     parser.add_argument('--latency-guardrail', type=float, default=0.10,
                         help='max tolerated query_total_ms regression')
@@ -210,7 +326,14 @@ def main() -> None:
     parser.add_argument('--phase', type=int, default=1, choices=(1, 2),
                         help='1: generator-option ladder from scratch; '
                              '2: foundational-mechanism ladder on top of the phase-1 winner')
+    parser.add_argument('--phase1-json', default=None,
+                        help='result file of the phase-1 run whose winner phase 2 builds on '
+                             '(required with --phase 2)')
     args = parser.parse_args()
+    if args.phase == 2 and not args.phase1_json:
+        parser.error('--phase 2 requires --phase1-json: the phase-2 baseline is the winner of a real phase-1 run')
+    if args.phase == 1 and args.phase1_json:
+        parser.error('--phase1-json only applies to --phase 2')
 
     workdir = Path(args.workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -228,20 +351,23 @@ def main() -> None:
         print(json.dumps(entry), flush=True)
 
     # iteration 0: baseline
+    best_options: dict[str, str]
+    best_env: dict[str, str]
     if args.phase == 2:
-        # phase-1 winner is the new baseline
-        best_options: dict[str, str] = {
-            'recursive_type_depth': '-1',
-            'minimalRuntime': 'true',
-            'separateModelFiles': 'true',
-        }
-        best_unified = True
+        # the phase-1 winner is the new baseline — read from that run, not restated
+        best_options, best_env, best_unified = load_phase1_winner(Path(args.phase1_json))
+        print(json.dumps({'phase1_winner': {'options': best_options, 'env': best_env, 'unified': best_unified},
+                          'from': args.phase1_json}), flush=True)
     else:
         best_options = {}
+        best_env = {}
         best_unified = False
-    best_env: dict[str, str] = {}
     a, s = generate_variant(workdir, best_options, best_unified)
-    best = cost(measure(workdir, a, s, args.repeats, args.rounds, best_env))
+    try:
+        best = cost(measure(workdir, a, s, args.repeats, args.rounds, best_env))
+    except MeasurementError as exc:
+        # nothing to compare candidates against; there is no run to salvage
+        raise SystemExit(f'baseline measurement failed: {exc}') from exc
     record('baseline', best_options, best_unified, 'ACCEPT', best)
 
     remaining = list(CANDIDATES_PHASE2 if args.phase == 2 else CANDIDATES)
@@ -258,6 +384,11 @@ def main() -> None:
         except subprocess.CalledProcessError as exc:
             record(name, trial_options, trial_unified, 'REJECT', None,
                    note=f'failed: {(exc.stderr or exc.stdout or "")[-300:]}')
+            continue
+        except MeasurementError as exc:
+            # ran, exited 0, produced nothing usable: still this candidate's
+            # problem, not a reason to abandon the remaining ladder
+            record(name, trial_options, trial_unified, 'REJECT', None, note=f'unusable measurement: {exc}')
             continue
 
         improvement = 1 - scores['composite'] / best['composite']

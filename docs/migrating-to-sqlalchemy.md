@@ -409,6 +409,17 @@ where Prisma landed a valid one, and an `@updatedAt` column has no server defaul
 whatsoever, so the INSERT fails on NOT NULL. That is what `values_for_create` and
 `values_for_update` are for. They are not optional.
 
+**And one that only bites at the very end: can you uninstall `prisma`?** Only on
+the generated-declarative path. `sa.metadata()` reads the schema out of the
+generated client, so keeping the transparent layer means keeping the dependency
+— which is fine, and cheaper than it sounds, but it is not "off Prisma" if that
+was the goal. Generated declarative source imports nothing from `prisma`, so
+that path really does end with the dependency gone. The same applies to anything
+else you kept that reaches into the package: a custom generator, `prisma.fields`
+types in your annotations, `prisma.errors` in your exception handlers. Grep for
+`import prisma` before you assume the last step is a one-line change to
+`pyproject.toml`.
+
 ---
 
 ## Decision 4 — phased, or big bang?
@@ -687,6 +698,15 @@ and aware UTC for `@db.Timestamptz`, truncated to milliseconds; and `ulid()`,
 `conn.execute(sa.text(...))`, converting positional `$1` parameters to named
 `:name` binds. If your hot paths are already on `query_raw`, that part of the
 migration is nearly free.
+
+One exception, and it is a result-shape change rather than a SQL one:
+`query_raw(..., model=User)` hands back `User` instances, while
+`conn.execute(sa.text(...))` hands back rows. `.mappings()` gets you dicts, and
+from there either construct the model yourself or — if you generated declarative
+classes — use `session.scalars(select(User).from_statement(text(...)))`, which
+returns mapped instances. A call site that reads `user.email` off the result
+keeps working in the third form and breaks in the first two, so this is worth
+checking before you assume raw SQL is free.
 
 ---
 

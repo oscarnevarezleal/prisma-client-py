@@ -54,9 +54,20 @@ _RAW_DECODE_ENABLED: bool = os.environ.get('PRISMA_PY_RAW_DECODE', '') not in ('
 _DECODER_CACHE: dict[tuple[str, Any], object | None] = {}
 
 
-def _response_decoder(method: str, model: type[BaseModel] | None) -> object | None:
-    """A one-pass decoder for this call, or None to take the dict path."""
-    if not _RAW_DECODE_ENABLED or model is None:
+def _response_decoder(
+    method: str,
+    model: type[BaseModel] | None,
+    root_selection: list[str] | None = None,
+) -> object | None:
+    """A one-pass decoder for this call, or None to take the dict path.
+
+    `root_selection` narrows the fields the engine returns, so the response no
+    longer has the shape the typed decoder was built for. Rather than key the
+    cache on it — the selections are unbounded, and a decoder per selection
+    would be built once and reused never — those calls fall back to the dict
+    path, which handles any shape.
+    """
+    if not _RAW_DECODE_ENABLED or model is None or root_selection is not None:
         return None
 
     key = (method, model)
@@ -471,7 +482,7 @@ class SyncBasePrisma(BasePrisma[SyncAbstractEngine]):
         return self._engine.query(
             builder.build(),
             tx_id=self._tx_id,
-            decoder=_response_decoder(method, model),
+            decoder=_response_decoder(method, model, root_selection),
         )
 
 
@@ -595,5 +606,5 @@ class AsyncBasePrisma(BasePrisma[AsyncAbstractEngine]):
         return await self._engine.query(
             builder.build(),
             tx_id=self._tx_id,
-            decoder=_response_decoder(method, model),
+            decoder=_response_decoder(method, model, root_selection),
         )

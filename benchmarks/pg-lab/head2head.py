@@ -1,11 +1,28 @@
-"""Clean head-to-head of model backends on the phase-2 end-state configs.
+"""Clean interleaved comparison of model backends and of end-state configs.
 
 The ladder loop measures each candidate once against a moving baseline, which
 is the right shape for exploration but noise-sensitive for close calls. This
-script settles a specific comparison: same machine pass, interleaved runs
-(A,B,C,A,B,C,... so drift hits all variants equally), higher repeats.
+script settles specific comparisons: same machine pass, interleaved runs
+(A,B,C,A,B,C,... rotated each pass so drift hits all variants equally), higher
+repeats.
 
-    python head2head.py --workdir /tmp/pglab --repeats 7 --rounds 30
+There are two variant sets, and they answer different questions:
+
+`--set backends` — **which record backend is faster.** The three variants hold
+every non-backend generator option identical and differ only in
+`modelBackend`. That includes `separateModelFiles`, which is held *off* for
+all three: msgspec resolves cyclic relation references against a single
+module and so cannot use it, and leaving it on for the other two would fold a
+lazy-per-model-file win into a number labelled "backend".
+
+`--set configs` — **what an end-state configuration costs.** Each variant is
+the best known configuration for its backend, so they differ in more than the
+backend (`config-pydantic` keeps `separateModelFiles` and no `lazyActions`;
+`config-final` adds runtime env flags). Rows here are comparable to
+`baseline` — an upstream default install — but *not* to each other as a
+backend comparison.
+
+    python head2head.py --workdir /tmp/pglab --set backends --repeats 7 --rounds 30
 """
 
 from __future__ import annotations
@@ -24,17 +41,46 @@ assert _spec and _spec.loader
 _loop = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_loop)
 
+# Held identical across every `backend-*` variant, so `modelBackend` is the only
+# thing that differs between them. Do not add an option here that one backend
+# cannot take — hold it off for all three instead, or the comparison stops
+# being a backend comparison.
+BACKEND_COMMON: dict[str, str] = {
+    'recursive_type_depth': '-1',
+    'minimalRuntime': 'true',
+    'separateModelFiles': 'false',
+    'lazyActions': 'true',
+}
+
 # Each variant: generator `options`, whether the two interfaces are grafted into
 # one `unified` package, and any runtime `env` flags.
-VARIANTS: dict[str, dict[str, object]] = {
+BACKEND_VARIANTS: dict[str, dict[str, object]] = {
+    'backend-pydantic': {'options': dict(BACKEND_COMMON), 'unified': True, 'env': {}},
+    'backend-slim': {
+        'options': {**BACKEND_COMMON, 'modelBackend': '"slim"'},
+        'unified': True,
+        'env': {},
+    },
+    'backend-msgspec': {
+        'options': {**BACKEND_COMMON, 'modelBackend': '"msgspec"'},
+        'unified': True,
+        'env': {},
+    },
+}
+
+# End-state configurations. These are NOT a controlled comparison of anything:
+# each is the best known setup for its backend, and they differ in several
+# options at once. Read them against `baseline`, not against each other.
+CONFIG_VARIANTS: dict[str, dict[str, object]] = {
     # what an upstream user gets today: default options, two separate packages
     'baseline': {'options': {}, 'unified': False, 'env': {}},
-    'pydantic': {
+    # generator options only (the phase-1 winner)
+    'config-pydantic': {
         'options': {'recursive_type_depth': '-1', 'minimalRuntime': 'true', 'separateModelFiles': 'true'},
         'unified': True,
         'env': {},
     },
-    'slim': {
+    'config-slim': {
         'options': {
             'recursive_type_depth': '-1',
             'minimalRuntime': 'true',
@@ -45,7 +91,7 @@ VARIANTS: dict[str, dict[str, object]] = {
         'unified': True,
         'env': {},
     },
-    'msgspec': {
+    'config-msgspec': {
         'options': {
             'recursive_type_depth': '-1',
             'minimalRuntime': 'true',
@@ -57,7 +103,7 @@ VARIANTS: dict[str, dict[str, object]] = {
         'env': {},
     },
     # everything this fork offers, turned on together
-    'final': {
+    'config-final': {
         'options': {
             'recursive_type_depth': '-1',
             'minimalRuntime': 'true',
@@ -70,22 +116,61 @@ VARIANTS: dict[str, dict[str, object]] = {
     },
 }
 
+VARIANTS: dict[str, dict[str, object]] = {**CONFIG_VARIANTS, **BACKEND_VARIANTS}
+
+SETS: dict[str, dict[str, dict[str, object]]] = {
+    'backends': BACKEND_VARIANTS,
+    'configs': CONFIG_VARIANTS,
+    'all': VARIANTS,
+}
+
+HEADERS = ('| variant | RSS (MB) | import (ms) | connect (ms) | queries (ms) | composite | vs baseline |',
+           '| --- | ---: | ---: | ---: | ---: | ---: | ---: |')
+
+
+def print_table(title: str, caveat: str, results: dict[str, dict[str, float]],
+                base_c: dict[str, float] | None) -> None:
+    print()
+    print(f'### {title}')
+    print(caveat)
+    print()
+    for line in HEADERS:
+        print(line)
+    for name, c in results.items():
+        delta = ''
+        if base_c and name != 'baseline':
+            delta = f'{(c["composite"] / base_c["composite"] - 1) * 100:+.1f}%'
+        print(
+            f'| {name} | {c["rss_final_mb"]} | {c["import_total_ms"]} '
+            f'| {c["connect_total_ms"]} | {c["query_total_ms"]} | {c["composite"]} | {delta} |'
+        )
+
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--workdir', required=True)
-    parser.add_argument('--repeats', type=int, default=7)
-    parser.add_argument('--rounds', type=int, default=30)
+    parser.add_argument('--repeats', type=_loop.positive_int, default=7)
+    parser.add_argument('--rounds', type=_loop.positive_int, default=30)
     parser.add_argument('--json', default=None)
+    parser.add_argument('--set', dest='variant_set', choices=sorted(SETS), default='all',
+                        help='backends: modelBackend isolated; configs: end-state configs vs baseline')
     parser.add_argument('--only', nargs='+', default=None, help='subset of variant names to run')
     args = parser.parse_args()
 
     base = Path(args.workdir)
 
+    chosen = SETS[args.variant_set]
+    if args.only:
+        unknown = [name for name in args.only if name not in chosen]
+        if unknown:
+            parser.error(
+                f'--only: unknown variant(s) {", ".join(unknown)} in set {args.variant_set!r}; '
+                f'available: {", ".join(chosen)}'
+            )
+    selected = {k: v for k, v in chosen.items() if args.only is None or k in args.only}
+
     # generate every variant into its own subdirectory up front so the
     # measurement phase can interleave without regeneration between runs
-    selected = {k: v for k, v in VARIANTS.items() if args.only is None or k in args.only}
-
     mods: dict[str, tuple[Path, str, str, dict]] = {}
     for name, spec in selected.items():
         workdir = base / f'h2h_{name}'
@@ -96,10 +181,14 @@ def main() -> None:
 
     raw: dict[str, list[dict[str, float]]] = {name: [] for name in mods}
     for i in range(args.repeats):
-        # alternate direction each pass so no variant systematically runs first
+        # Rotate the running order by pass index. Reversing on alternate passes
+        # only ever gives a variant two of the available positions — with three
+        # or more variants the middle ones stay in the middle every pass, and
+        # whatever the machine is doing during that slot biases the same
+        # variant every time. A rotation walks each variant through every slot.
         items = list(mods.items())
-        if i % 2:
-            items.reverse()
+        offset = i % len(items)
+        items = items[offset:] + items[:offset]
         for name, (workdir, a, s, env) in items:
             m = _loop.measure(workdir, a, s, 1, args.rounds, env)
             raw[name].append(m)
@@ -110,18 +199,25 @@ def main() -> None:
         med = {k: round(statistics.median(r[k] for r in runs), 2) for k in runs[0]}
         results[name] = _loop.cost(med)
 
-    print()
     base_c = results.get('baseline')
-    print('| variant | RSS (MB) | import (ms) | connect (ms) | queries (ms) | composite | vs baseline |')
-    print('| --- | ---: | ---: | ---: | ---: | ---: | ---: |')
-    for name, c in results.items():
-        delta = ''
-        if base_c and name != 'baseline':
-            delta = f'{(c["composite"] / base_c["composite"] - 1) * 100:+.1f}%'
-        print(
-            f'| {name} | {c["rss_final_mb"]} | {c["import_total_ms"]} '
-            f'| {c["connect_total_ms"]} | {c["query_total_ms"]} | {c["composite"]} | {delta} |'
+    configs = {k: v for k, v in results.items() if k in CONFIG_VARIANTS}
+    backends = {k: v for k, v in results.items() if k in BACKEND_VARIANTS}
+
+    if configs:
+        print_table(
+            'End-state configurations',
+            'Each row is the best known setup for its backend and differs from the others in more\n'
+            'than the backend. Compare against `baseline`; do not read this table as a backend ranking.',
+            configs, base_c,
         )
+    if backends:
+        print_table(
+            'Model backends (only `modelBackend` differs)',
+            'Every other generator option is held identical, including `separateModelFiles`, which is\n'
+            'off for all three because msgspec cannot use it.',
+            backends, base_c,
+        )
+
     if base_c:
         print()
         for name, c in results.items():
@@ -135,7 +231,16 @@ def main() -> None:
             )
 
     if args.json:
-        Path(args.json).write_text(json.dumps({'results': results, 'raw': raw}, indent=2))
+        Path(args.json).write_text(json.dumps(
+            {
+                'set': args.variant_set,
+                'options': {name: selected[name]['options'] for name in results},
+                'env': {name: selected[name].get('env', {}) for name in results},
+                'results': results,
+                'raw': raw,
+            },
+            indent=2,
+        ))
 
 
 if __name__ == '__main__':

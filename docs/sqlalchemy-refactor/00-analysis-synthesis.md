@@ -571,3 +571,14 @@ Recommendation: **full runtime surface for reads; typed subset plus `update`,
 `upsert` and `deleteMany` for writes**, with a loud `NotImplementedError` naming
 the operation for anything else. A loud refusal is a documented limitation; a
 silent difference is a data-corruption bug.
+
+> **Superseded — this is not what was built.** A reviewer objected that raising
+> `NotImplementedError` for nested writes would withdraw a surface that works
+> today, which contradicts the no-signature-change goal. That objection is
+> correct, and the project took the other road: there is no replacement query
+> engine. `prisma.sa` is a *migration toolkit* — schema metadata, declarative and
+> Alembic emitters, and `prisma py sqlalchemy doctor`, which reports what a
+> codebase would cost to migrate. The binary engine keeps serving every call it
+> serves now, including nested writes, and nothing is taken away. What the
+> runbook's §5 STOP list marks is translations *we have not verified*, which is a
+> statement about our evidence rather than a restriction on the client.
