@@ -123,8 +123,6 @@ Concretely, what would help most, in order:
 ## Still open, unchanged
 
 - **PostgreSQL only.**
-- **`relationMode = "prisma"`** — absent from the generator payload; recoverable
-  by lexing the same way, not yet done.
 - **Writes and transactions are on the STOP list.** Their measurement was 62% of
   call sites. Now that Phase 3 should complete, this is the thing standing
   between them and Phase 4.

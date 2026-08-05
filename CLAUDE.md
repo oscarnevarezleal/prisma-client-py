@@ -96,9 +96,22 @@ layer is worse than none, because it looks authoritative.
 **Four annotations live in the Prisma schema language but never reach the
 DMMF**, and are recovered by lexing the raw schema text in
 `generator/_native_types.py`: `@db.*` native types, `@relation(map:)`,
-`@relation(onUpdate:)` — and `relationMode`, which is *not yet* wired into the
-builder (see below). If a fifth turns up, it goes through the same shared,
-string-aware `@relation(` scanner rather than a new regex.
+`@relation(onUpdate:)` and the datasource's `relationMode`. If a fifth turns up
+and it is a `@relation` argument, it goes through the same shared, string-aware
+`@relation(` scanner rather than a new regex; `relationMode` is a datasource
+setting and has its own block scan, but it still lives in that one module —
+`_doctor.py`'s §0 scope check calls into it rather than keeping a second regex.
+
+**`relationMode = "prisma"` means the database has no foreign keys at all**, so
+`build_metadata` emits none — not on model tables and not on the implicit m2m
+join tables — and no index in their place, because Prisma creates none either
+and only warns. It has its own reference schema and its own `pg_dump` gate
+(`test_ddl_equivalence_relation_mode.py`); it cannot share the first one,
+because `relationMode` is datasource-level and a schema has one datasource.
+With no `ForeignKey` to read, `relationship()` cannot infer a join, so
+`_declarative.py` emits explicit `primaryjoin` conditions with `foreign()`
+annotations — strings for model-to-model joins, and lambdas through the join
+table for m2m, since the join table has no class for the registry to resolve.
 
 **The runbook is the contract.** `docs/prisma-to-sqlalchemy-runbook.md` §4.1
 lists translations that were executed against a live database and compared row
@@ -151,10 +164,11 @@ Two habits follow, and they are worth more than any individual fix:
 
 Roughly in order of how much damage each can do.
 
-- **`relationMode = "prisma"` is not wired into the builder.** Same family as the
-  four above and worse in kind: the database then has *no* foreign keys, so every
-  FK `prisma.sa` builds diffs against every table. `_doctor.py` already lexes it
-  for the scope check; nothing feeds it into `build_metadata`.
+- **Nothing replaces the referential integrity `relationMode = "prisma"` gave
+  up.** The DDL is now right, but Prisma was enforcing relations in the query
+  engine and SQLAlchemy does not. `_doctor.py` still reports the mode as a §0
+  fail for that reason, not for the old one. No tooling offers to add the
+  constraints, or to check for rows that already violate them.
 - **`Json` decoding is broken on the msgspec backend.** `_dec_hook` returns the
   decoded object, but msgspec requires the hook to return an instance of the
   annotated type, so any *populated* `Json` column raises

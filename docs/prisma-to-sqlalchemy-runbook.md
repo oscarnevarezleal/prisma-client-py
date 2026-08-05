@@ -65,9 +65,14 @@ reports the same `prisma.__version__`.
   been verified against PostgreSQL, and an unverified type mapping fails as a
   schema diff during a deploy, not here.
 - **`relationMode = "prisma"`** means the database has **no foreign keys at
-  all**. Prisma does not report this through the generator protocol, so the
-  metadata cannot see it, and every FK this migration creates would be a diff
-  against every table.
+  all** — Prisma enforces relations in the query engine instead. Since 1.3.0 the
+  metadata describes that database correctly (the mode is lexed out of the raw
+  schema text, since Prisma does not send it through the generator protocol), so
+  this is no longer a DDL problem. It is still a hard stop, for a different
+  reason: **SQLAlchemy does not emulate the enforcement Prisma was doing.**
+  After the migration nothing rejects an orphaned row. Decide deliberately —
+  add the constraints, keep enforcing in application code, or accept it — rather
+  than discovering it from the data.
 
 `@db.*` native types are **no longer a stop** — they are read from the raw
 schema text and honoured. Record the count anyway, because it tells you how much
@@ -952,6 +957,21 @@ Pin the same version in `package.json`, and use `python -m prisma` rather than
 ---
 
 ## Changelog
+
+**1.3.0** — the last two annotations that live in the schema language and never
+reach the DMMF. Both were found here rather than reported.
+
+| | fixed |
+| --- | --- |
+| `@relation(onUpdate: …)` ignored, so every foreign key got Prisma's default `ON UPDATE CASCADE` whatever the schema said | ✅ |
+| `relationMode = "prisma"` ignored, so a database Prisma builds with **no foreign keys at all** got one constraint per relation — an autogenerate diff against every table | ✅ |
+
+`relationMode = "prisma"` is now supported rather than refused: the metadata
+describes the database Prisma actually creates, and the generated declarative
+models carry explicit `primaryjoin` conditions, since `relationship()` cannot
+infer a join with no `ForeignKey` to read. Note that §0's scope check still
+reports it as a **fail** — it is a real change in what the database enforces,
+and a team should decide about it deliberately rather than find out later.
 
 **1.2.0** — three more from the retest of 1.1.0, on the same schema.
 

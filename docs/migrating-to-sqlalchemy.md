@@ -99,7 +99,7 @@ run also lists every call site individually):
 ```
 prisma py sqlalchemy doctor
 runbook: docs/prisma-to-sqlalchemy-runbook.md — §4.1 is the verified list, §5 is the STOP list
-prisma.sa 1.2.0
+prisma.sa 1.3.0
 
 Scope check (§0)
   provider is PostgreSQL           pass     postgresql

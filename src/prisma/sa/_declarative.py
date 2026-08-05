@@ -242,6 +242,7 @@ class _Emitter:
         self.uses_event = False
         self.uses_mapped = False
         self.uses_relationship = False
+        self.uses_foreign = False
 
     def run(self, *, strict: bool) -> DeclarativeSource:
         mappable = self._plan_models()
@@ -391,6 +392,8 @@ class _Emitter:
         # first, and classes before functions within an import
         orm = ['Mapped'] if self.uses_mapped else []
         orm.append('DeclarativeBase')
+        if self.uses_foreign:
+            orm.append('foreign')
         if self.uses_relationship:
             orm.append('relationship')
         if self.uses_mapped:
@@ -671,6 +674,77 @@ class _Emitter:
 
     # -- relationships -------------------------------------------------------
 
+    def _joins_without_a_foreign_key(self, rel: Mapping[str, Any]) -> bool:
+        """Whether this relation has to spell its join condition out.
+
+        True exactly when the built `MetaData` carries no `ForeignKeyConstraint`
+        for the relation --- which is what `relationMode = "prisma"` produces,
+        because Prisma then creates none in the database and enforces relations
+        in the query engine instead.
+        """
+        if rel['shape'] == 'many-to-many':
+            table = self._table(rel['join_table'])
+            return not [c for c in table.constraints if isinstance(c, sa.ForeignKeyConstraint)]
+
+        table = self._table(self.schema[rel['fk_model']]['table'])
+        columns = list(rel['fk_columns'])
+        matching = [
+            c for c in table.constraints if isinstance(c, sa.ForeignKeyConstraint) and list(c.column_keys) == columns
+        ]
+        return not matching
+
+    def _primary_join(self, rel: Mapping[str, Any], fk_model: str, referenced: str) -> str:
+        """`foreign(Child.parentId) == Parent.id`, as a string SQLAlchemy evals.
+
+        `foreign()` is what tells SQLAlchemy which side of the comparison is the
+        dependent one, since there is no `ForeignKey` to say so. It resolves out
+        of SQLAlchemy's own namespace when the argument is a string, so it costs
+        no import; the many-to-many form below cannot use a string and does.
+
+        The same text serves both sides of the relation: direction is decided by
+        the annotation and the mapper, not by which operand comes first.
+        """
+        pairs = [
+            f'foreign({fk_model}.{fk_field}) == {referenced}.{referenced_field}'
+            for fk_field, referenced_field in zip(rel['fk_fields'], rel['referenced_fields'])
+        ]
+        if len(pairs) == 1:
+            return pairs[0]
+        # a compound `@relation(fields: [a, b], references: [x, y])`
+        return 'and_(' + ', '.join(pairs) + ')'
+
+    def _secondary_join_conditions(
+        self,
+        model: str,
+        rel: Mapping[str, Any],
+        mappable: Mapping[str, str],
+        join_table: str,
+    ) -> List[str]:
+        """The two halves of a many-to-many join, when the join table has no FKs.
+
+        Emitted as lambdas rather than strings: the join table has no class, so
+        there is no name for `relationship()`'s registry lookup to resolve, and
+        the module-level `Table` variable is only reachable from real Python.
+        A lambda is also evaluated late, so it can name a class defined further
+        down the file.
+        """
+        self_column = rel['join_self_column']
+        other_column = rel['join_other_column']
+        # `None` on both only happens for a self-referential m2m, which is
+        # refused before it reaches here --- assert rather than render `c[None]`.
+        assert self_column is not None and other_column is not None, 'an ambiguous join is refused, not rendered'
+
+        this_class = mappable[model]
+        other_class = mappable[rel['to']]
+        this_key = self.schema[model]['primary_key']['fields'][0]
+        other_key = self.schema[rel['to']]['primary_key']['fields'][0]
+
+        self.uses_foreign = True
+        return [
+            f'primaryjoin=lambda: {this_class}.{this_key} == foreign({join_table}.c[{_lit(self_column)}])',
+            f'secondaryjoin=lambda: foreign({join_table}.c[{_lit(other_column)}]) == {other_class}.{other_key}',
+        ]
+
     def _render_relation(
         self,
         model: str,
@@ -688,12 +762,29 @@ class _Emitter:
         target = mappable[rel['to']]
         args = [_lit(target)]
 
+        # `relationship()` infers its join condition from the `ForeignKey`
+        # metadata, and under `relationMode = "prisma"` there is none — so it
+        # raises `NoForeignKeysError` at `configure_mappers()` rather than
+        # loading the wrong rows. Read off the built `MetaData`, like every other
+        # DDL-derived decision here, so the two layers cannot disagree about
+        # which relations have a constraint.
+        explicit_join = self._joins_without_a_foreign_key(rel)
+
         if rel['shape'] == 'many-to-many':
-            args.append(f'secondary={self.table_vars[rel["join_table"]]}')
+            join_table = self.table_vars[rel['join_table']]
+            args.append(f'secondary={join_table}')
+            if explicit_join:
+                args.extend(self._secondary_join_conditions(model, rel, mappable, join_table))
         else:
             fk_model = mappable[rel['fk_model']]
-            fk_fields = ', '.join(f'{fk_model}.{name}' for name in rel['fk_fields'])
-            args.append(f'foreign_keys={_lit(f"[{fk_fields}]")}')
+            if explicit_join:
+                # The referenced side is the model that does *not* hold the
+                # foreign key, which on an inverse relation is this one.
+                referenced = target if rel['owner'] else mappable[model]
+                args.append(f'primaryjoin={_lit(self._primary_join(rel, fk_model, referenced))}')
+            else:
+                fk_fields = ', '.join(f'{fk_model}.{name}' for name in rel['fk_fields'])
+                args.append(f'foreign_keys={_lit(f"[{fk_fields}]")}')
             if rel['to'] == model and not rel['is_list']:
                 # a self-relation: without `remote_side` SQLAlchemy cannot tell
                 # which end of the join is the parent

@@ -1,9 +1,9 @@
 """Recover annotations Prisma does not put in the DMMF from the raw schema text.
 
-Three of them so far: `@db.*` native types, `@relation(map:)` constraint names
-and `@relation(onUpdate:)` referential actions. All three are verified absent
-from the generator payload, and all three change the database — so all three
-have to be lexed or silently lost.
+Four of them so far: `@db.*` native types, `@relation(map:)` constraint names,
+`@relation(onUpdate:)` referential actions and the datasource's `relationMode`.
+All four are verified absent from the generator payload, and all four change the
+database — so all four have to be lexed or silently lost.
 
 Prisma does not send these through the generator protocol. Verified, not
 assumed: a schema using `@db.Uuid` and `@db.VarChar(255)` produces a DMMF
@@ -28,7 +28,13 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Tuple, Callable, Optional
 
-__all__ = ('parse_native_types', 'parse_relation_maps', 'parse_relation_on_update', 'NativeType')
+__all__ = (
+    'parse_native_types',
+    'parse_relation_maps',
+    'parse_relation_on_update',
+    'parse_relation_mode',
+    'NativeType',
+)
 
 #: (type name, arguments) — e.g. `@db.VarChar(255)` -> ('VarChar', ['255'])
 NativeType = Tuple[str, List[str]]
@@ -244,3 +250,51 @@ def parse_relation_on_update(schema: str) -> Dict[str, Dict[str, str]]:
 def _read_on_update(args: str) -> Optional[str]:
     match = _ON_UPDATE_ARG.search(_blank_strings(args))
     return match.group('action') if match is not None else None
+
+
+# `datasource db { ... }`. Same shape as `_MODEL_BLOCK`: Prisma requires the
+# closing brace in column 0, and a datasource block holds no nested braces.
+_DATASOURCE_BLOCK = re.compile(
+    r'^datasource\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{(?P<body>.*?)^\}',
+    re.MULTILINE | re.DOTALL,
+)
+
+# `relationMode = "prisma"`, anchored to the start of its own line so that a
+# `url` holding the text cannot be read as the setting.
+_RELATION_MODE_ASSIGNMENT = re.compile(r'^[ \t]*relationMode\s*=\s*"(?P<mode>[^"]*)"', re.MULTILINE)
+
+
+def parse_relation_mode(schema: str) -> Optional[str]:
+    """The datasource's `relationMode`, or `None` when it does not declare one.
+
+    Absent from the generator payload like the three above — verified: a schema
+    with `relationMode = "prisma"` arrives with a `datasources` entry carrying
+    `name`, `provider`, `activeProvider`, `url`, `schemas` and `sourceFilePath`,
+    and no relation-mode key anywhere in the payload. The only trace is the raw
+    schema text.
+
+    Unlike the three above this is a *datasource* setting rather than a field
+    attribute, so it is one value for the whole schema rather than a mapping —
+    but it is recovered here, with them, because it is the same problem: an
+    annotation in the schema language that changes the database and never
+    reaches the wire.
+
+    Measured against `prisma db push` 5.19 on PostgreSQL, `relationMode =
+    "prisma"` creates **no foreign key constraints at all** — not on model
+    tables and not on the implicit many-to-many join tables — and creates no
+    index in their place either. Prisma only warns that relation scalars are
+    then unindexed.
+
+    Reported as written (`prisma`, `foreignKeys`); `None` means the datasource
+    is silent, which is Prisma's default of `foreignKeys`.
+    """
+    text = _strip_comments(schema)
+
+    for block in _DATASOURCE_BLOCK.finditer(text):
+        match = _RELATION_MODE_ASSIGNMENT.search(block.group('body'))
+        if match is not None:
+            return match.group('mode')
+
+    # Prisma permits exactly one datasource block, so there is no second one to
+    # disagree; a schema with none simply has not declared a mode.
+    return None

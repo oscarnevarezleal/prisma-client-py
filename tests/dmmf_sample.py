@@ -26,7 +26,15 @@ from contextlib import contextmanager
 from prisma._compat import model_parse_strict
 from prisma.generator.models import Config, Datamodel, data_ctx, config_ctx
 
-SAMPLE = Path(__file__).parent / 'test_generation' / 'data' / 'dmmf_wire_sample.json'
+_DATA = Path(__file__).parent / 'test_generation' / 'data'
+
+SAMPLE = _DATA / 'dmmf_wire_sample.json'
+
+#: A second sample, recorded the same way, whose datasource sets
+#: `relationMode = "prisma"`. That is a *datasource* setting, so it cannot be
+#: added to the schema above — a schema has one datasource and it is either in
+#: that mode or not — and the database it describes has no foreign keys at all.
+RELATION_MODE_SAMPLE = _DATA / 'relation_mode_sample.json'
 
 
 class _FakeDatasource:
@@ -51,21 +59,21 @@ class _FakeData:
         self.datasources: List[Any] = [_FakeDatasource()]
 
 
-def read_wire_sample() -> Dict[str, Any]:
-    return cast('Dict[str, Any]', json.loads(SAMPLE.read_text()))
+def read_wire_sample(sample: Path = SAMPLE) -> Dict[str, Any]:
+    return cast('Dict[str, Any]', json.loads(sample.read_text()))
 
 
-def schema_text() -> str:
+def schema_text(sample: Path = SAMPLE) -> str:
     """The raw `schema.prisma` contents as Prisma sent them.
 
-    Needed for `@db.*` native types, which Prisma does not put in the DMMF at
-    all — they are only recoverable by lexing this.
+    Needed for `@db.*` native types and `relationMode`, which Prisma does not
+    put in the DMMF at all — they are only recoverable by lexing this.
     """
-    return str(read_wire_sample()['datamodel'])
+    return str(read_wire_sample(sample)['datamodel'])
 
 
 @contextmanager
-def loaded_datamodel() -> Iterator[Datamodel]:
+def loaded_datamodel(sample: Path = SAMPLE) -> Iterator[Datamodel]:
     """Parse the sample and publish it to the generator's context vars."""
     # `Decimal` fields refuse to validate without the experimental flag, and
     # constructing a Config is what publishes it to the context. Constructing it
@@ -74,7 +82,7 @@ def loaded_datamodel() -> Iterator[Datamodel]:
     # later test and hide a genuinely missing one.
     config_token = config_ctx.set(Config(enable_experimental_decimal=True))
     try:
-        datamodel = model_parse_strict(Datamodel, read_wire_sample()['dmmf']['datamodel'])
+        datamodel = model_parse_strict(Datamodel, read_wire_sample(sample)['dmmf']['datamodel'])
 
         # `_FakeData` is deliberately only the slice of `GenericData` the
         # derivation reads (see its docstring), so it cannot satisfy the context

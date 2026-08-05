@@ -59,6 +59,29 @@ def project_fixture(generated: Dict[str, Any], tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.fixture(name='relation_mode_project')
+def relation_mode_project_fixture(relation_mode_generated: Dict[str, Any], tmp_path: Path) -> Path:
+    """The same, for a schema whose datasource sets `relationMode = "prisma"`."""
+    baseline = build_alembic_baseline(
+        relation_mode_generated['schema'],
+        relation_mode_generated['enums'],
+        relation_mode_generated['provider'],
+        models_import='models',
+    )
+    for relative, content in baseline.files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    emitted = build_declarative(
+        relation_mode_generated['schema'],
+        relation_mode_generated['enums'],
+        relation_mode_generated['provider'],
+    )
+    (tmp_path / 'models.py').write_text(emitted.source)
+    return tmp_path
+
+
 @pytest.fixture(name='database')
 def database_fixture(request: pytest.FixtureRequest) -> Iterator[str]:
     """A scratch database, empty unless the test asks for the schema.
@@ -315,6 +338,66 @@ def test_autogenerate_diff_is_empty(project: Path, database: str, metadata: sa.M
     (generated_file,) = [path for path in (project / 'migrations' / 'versions').iterdir() if 'gate' in path.name]
     body = upgrade_body(generated_file)
     assert 'op.' not in body, f'autogenerate is not empty:\n{body}'
+
+
+@needs_alembic
+def test_autogenerate_diff_is_empty_without_foreign_keys(
+    relation_mode_project: Path,
+    database: str,
+    relation_mode_metadata: sa.MetaData,
+) -> None:
+    """The failure this whole change fixes, as Alembic would report it.
+
+    A metadata that describes foreign keys against a `relationMode = "prisma"`
+    database produces `op.create_foreign_key(...)` per relation --- which is the
+    first thing a team sees, and it looks like their own mistake. The emitted
+    `env.py` needs nothing extra for this case: with no constraints on either
+    side there is nothing to compare, and that is asserted here rather than
+    assumed.
+    """
+    build_schema(database, relation_mode_metadata)
+    assert alembic(relation_mode_project, database, 'upgrade', 'head').returncode == 0
+
+    result = alembic(relation_mode_project, database, 'revision', '--autogenerate', '-m', 'relmode')
+    assert result.returncode == 0, f'{result.stdout}\n{result.stderr}'
+
+    (generated_file,) = [
+        path for path in (relation_mode_project / 'migrations' / 'versions').iterdir() if 'relmode' in path.name
+    ]
+    body = upgrade_body(generated_file)
+    assert 'op.' not in body, f'autogenerate is not empty:\n{body}'
+
+
+@needs_alembic
+def test_foreign_keys_against_a_relation_mode_database_are_a_diff(
+    relation_mode_project: Path,
+    database: str,
+    relation_mode_metadata: sa.MetaData,
+) -> None:
+    """The bite check for the test above, done through Alembic.
+
+    A constraint added to the metadata --- which is exactly what the builder used
+    to emit for every relation --- comes back as `create_foreign_key`. So the
+    empty diff above is the fix working, not autogenerate being blind to foreign
+    keys the way it is blind to their actions.
+    """
+    build_schema(database, relation_mode_metadata)
+    assert alembic(relation_mode_project, database, 'upgrade', 'head').returncode == 0
+
+    models = relation_mode_project / 'models.py'
+    models.write_text(
+        models.read_text() + '\n\nMember.__table__.append_constraint(\n'
+        "    sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], name='members_tenant_id_fkey')\n"
+        ')\n'
+    )
+
+    result = alembic(relation_mode_project, database, 'revision', '--autogenerate', '-m', 'bite')
+    assert result.returncode == 0, f'{result.stdout}\n{result.stderr}'
+
+    (generated_file,) = [
+        path for path in (relation_mode_project / 'migrations' / 'versions').iterdir() if 'bite' in path.name
+    ]
+    assert 'create_foreign_key' in upgrade_body(generated_file)
 
 
 @needs_alembic

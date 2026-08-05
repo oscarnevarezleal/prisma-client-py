@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator
 
 import pytest
 
-from ..dmmf_sample import SAMPLE, schema_text, loaded_datamodel
+from ..dmmf_sample import SAMPLE, RELATION_MODE_SAMPLE, schema_text, loaded_datamodel
 
 pytest.importorskip('sqlalchemy', reason='prisma[sqlalchemy] is not installed')
 
@@ -26,6 +26,37 @@ def generated_fixture() -> Iterator[Dict[str, Any]]:
             'enums': build_enum_metadata(datamodel),
             'provider': 'postgresql',
         }
+
+
+@pytest.fixture(scope='package', name='relation_mode_generated')
+def relation_mode_generated_fixture() -> Iterator[Dict[str, Any]]:
+    """The same, for the second sample, whose datasource is `relationMode = "prisma"`.
+
+    A separate schema rather than a separate model in the first one: the setting
+    is on the datasource, and a schema has exactly one of those.
+    """
+    if not RELATION_MODE_SAMPLE.exists():  # pragma: no cover
+        pytest.skip(f'wire sample not recorded at {RELATION_MODE_SAMPLE}')
+
+    from prisma.generator.models import build_enum_metadata, build_schema_metadata
+
+    with loaded_datamodel(RELATION_MODE_SAMPLE) as datamodel:
+        yield {
+            'schema': build_schema_metadata(datamodel, schema_text(RELATION_MODE_SAMPLE)),
+            'enums': build_enum_metadata(datamodel),
+            'provider': 'postgresql',
+        }
+
+
+@pytest.fixture(scope='package', name='relation_mode_metadata')
+def relation_mode_metadata_fixture(relation_mode_generated: Dict[str, Any]) -> 'sa.MetaData':
+    from prisma.sa import build_metadata
+
+    return build_metadata(
+        relation_mode_generated['schema'],
+        relation_mode_generated['enums'],
+        relation_mode_generated['provider'],
+    )
 
 
 @pytest.fixture(scope='package', name='metadata')

@@ -144,6 +144,14 @@ class _RelationCommon(TypedDict):
     #: licence to hardcode CASCADE, because a schema that declares otherwise then
     #: gets the wrong ``ON UPDATE`` silently.
     on_update: Optional[str]
+    #: The datasource's ``relationMode``. Not in the DMMF either, so it is lexed
+    #: from the schema text; ``None`` means the datasource is silent, which is
+    #: Prisma's default of ``foreignKeys``. A datasource setting rather than a
+    #: per-relation one, reported here because it is what decides whether *this*
+    #: relation has a foreign key constraint at all: under ``prisma`` the
+    #: database has **none** — Prisma enforces relations in the query engine —
+    #: and the fields above describe a constraint that is not there.
+    relation_mode: Optional[str]
     #: The foreign key constraint name, on the owning side; ``None`` otherwise.
     #: ``@relation(map:)`` when set — Prisma does not send that in the DMMF, so it
     #: is lexed from the schema text — else ``<table>_<columns>_fkey`` truncated

@@ -57,7 +57,13 @@ from .._compat import (
 )
 from .._constants import QUERY_BUILDER_ALIASES
 from ._dsl_parser import parse_schema_dsl
-from ._native_types import NativeType, parse_native_types, parse_relation_maps, parse_relation_on_update
+from ._native_types import (
+    NativeType,
+    parse_native_types,
+    parse_relation_maps,
+    parse_relation_mode,
+    parse_relation_on_update,
+)
 
 __all__ = (
     'AnyData',
@@ -244,6 +250,12 @@ def build_schema_metadata(datamodel: 'Datamodel', schema_text: Optional[str] = N
     native_types = parse_native_types(schema_text) if schema_text else {}
     relation_maps = parse_relation_maps(schema_text) if schema_text else {}
     relation_on_update = parse_relation_on_update(schema_text) if schema_text else {}
+    # A datasource setting, so one value for every relation in the schema. It is
+    # reported *on* each relation rather than beside them because it is what
+    # decides whether that relation has a foreign key constraint at all, and a
+    # consumer building DDL is already reading `on_delete`/`on_update`/`fk_name`
+    # off the same dict.
+    relation_mode = parse_relation_mode(schema_text) if schema_text else None
 
     for model in datamodel.models:
         model_natives = native_types.get(model.name, {})
@@ -273,6 +285,8 @@ def build_schema_metadata(datamodel: 'Datamodel', schema_text: Optional[str] = N
                 owning_field = field.name if meta['owner'] else meta['back_field']
                 if meta['fk_model'] is not None and owning_field is not None:
                     meta['on_update'] = relation_on_update.get(meta['fk_model'], {}).get(owning_field)
+
+                meta['relation_mode'] = relation_mode
 
                 relations[field.name] = meta
                 continue
@@ -1477,6 +1491,11 @@ class Model(BaseModel):
             # fills it in from the lexed schema text; None stays "Prisma's
             # default", which for `onUpdate` is Cascade at every arity.
             'on_update': None,
+            # The datasource's `relationMode`, filled in by
+            # `build_schema_metadata` from the lexed schema text for the same
+            # reason: Prisma sends no relation-mode key either. None stays
+            # "Prisma's default", which is `foreignKeys`.
+            'relation_mode': None,
             # Always present, including on the relations where it is trivially
             # False. The runbook tells callers to check this before traversing a
             # relation, and a key that exists on only 2 of 640 relations makes

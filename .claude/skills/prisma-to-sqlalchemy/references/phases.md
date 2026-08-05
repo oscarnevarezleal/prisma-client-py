@@ -199,7 +199,7 @@ The doctor gathers all of these; this is what they mean.
 | fact | source | why |
 | --- | --- | --- |
 | provider | `schema.scope_check.provider` | non-PostgreSQL ends the migration |
-| relationMode | `schema.scope_check.relation_mode` | `"prisma"` means no FKs at all — ends it |
+| relationMode | `schema.scope_check.relation_mode` | `"prisma"` means no FKs at all; the DDL is emitted correctly for it, but nothing enforces the relations afterwards — ends it |
 | `@db.*` census | `schema.scope_check.native_types` | how much of the schema depends on the lexer |
 | schema files | `schema.scope_check.paths` | under `prismaSchemaFolder` this is several files, all of which count |
 | models / tables / enums / join tables | `schema.*` | join tables are the implicit m2m ones Prisma manages without a model |

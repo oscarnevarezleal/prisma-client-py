@@ -30,9 +30,9 @@ from prisma.generator.models import (
     build_enum_metadata,
     build_schema_metadata,
 )
-from prisma.generator._native_types import parse_relation_maps, parse_relation_on_update
+from prisma.generator._native_types import parse_relation_maps, parse_relation_mode, parse_relation_on_update
 
-from ..dmmf_sample import SAMPLE, schema_text, loaded_datamodel
+from ..dmmf_sample import SAMPLE, RELATION_MODE_SAMPLE, schema_text, loaded_datamodel
 
 
 @pytest.fixture(scope='module', name='datamodel')
@@ -352,6 +352,91 @@ def test_without_schema_text_on_update_is_absent(datamodel: Datamodel) -> None:
     """
     built = build_schema_metadata(datamodel)
     assert built['MaintenanceLock']['relations']['restricted']['on_update'] is None
+    assert built['MaintenanceLock']['relations']['restricted']['relation_mode'] is None
+
+
+# -- `relationMode`, which the DMMF does not carry either ---------------------
+
+
+@pytest.fixture(scope='module', name='relation_mode_schema')
+def relation_mode_schema_fixture() -> Iterator[Dict[str, Any]]:
+    if not RELATION_MODE_SAMPLE.exists():  # pragma: no cover
+        pytest.skip(f'wire sample not recorded at {RELATION_MODE_SAMPLE}')
+
+    with loaded_datamodel(RELATION_MODE_SAMPLE) as datamodel:
+        yield build_schema_metadata(datamodel, schema_text(RELATION_MODE_SAMPLE))
+
+
+def test_relation_mode_is_recovered_from_the_schema_text(relation_mode_schema: Dict[str, Any]) -> None:
+    """Prisma sends no relation-mode key, so this can only come from lexing.
+
+    Reported on every relation, both sides and every shape: it is a datasource
+    setting, and a consumer deciding whether to emit a constraint is looking at
+    one relation at a time.
+    """
+    modes = {
+        (model, name): relation['relation_mode']
+        for model, spec in relation_mode_schema.items()
+        for name, relation in spec['relations'].items()
+    }
+    assert modes, 'the sample schema declares no relations'
+    assert set(modes.values()) == {'prisma'}
+    assert modes[('Member', 'tenant')] == 'prisma'  # owner
+    assert modes[('Tenant', 'members')] == 'prisma'  # inverse
+    assert modes[('Member', 'groups')] == 'prisma'  # many-to-many
+    assert modes[('Member', 'manager')] == 'prisma'  # self-relation
+
+
+def test_relation_mode_absent_means_prisma_default(schema: Dict[str, Any]) -> None:
+    """The first reference schema declares none, which is `foreignKeys`.
+
+    Baking `foreignKeys` in here would lose the distinction between "the
+    datasource did not say" and "the datasource said so" --- and every consumer
+    already has to treat None as "Prisma's default".
+    """
+    modes = {relation['relation_mode'] for spec in schema.values() for relation in spec['relations'].values()}
+    assert modes == {None}
+
+
+def test_relation_mode_does_not_disturb_the_other_lexed_arguments(relation_mode_schema: Dict[str, Any]) -> None:
+    """`@relation(map:)` is still accepted in this mode, and still reads."""
+    assert relation_mode_schema['Config']['relations']['tenant']['fk_name'] == 'config_tenant_fk'
+    assert relation_mode_schema['Member']['relations']['manager']['on_update'] == 'Restrict'
+    assert relation_mode_schema['Member']['relations']['manager']['on_delete'] == 'Restrict'
+
+
+@pytest.mark.parametrize(
+    ('source', 'expected'),
+    [
+        ('datasource db {\n  provider = "postgresql"\n  relationMode = "prisma"\n}\n', 'prisma'),
+        ('datasource db {\n  provider = "mysql"\n  relationMode = "foreignKeys"\n}\n', 'foreignKeys'),
+        # Prisma accepts whitespace around the `=`
+        ('datasource db {\n  relationMode="prisma"\n}\n', 'prisma'),
+        # not declared at all
+        ('datasource db {\n  provider = "postgresql"\n}\n', None),
+        # no datasource block at all, e.g. a `prismaSchemaFolder` file holding
+        # only models
+        ('model Child {\n  id String @id\n}\n', None),
+        # commented out
+        ('datasource db {\n  // relationMode = "prisma"\n}\n', None),
+        # the text inside a value is not the setting
+        ('datasource db {\n  url = env("relationMode = \\"prisma\\"")\n}\n', None),
+        # a *generator* block is a different namespace and owns no such key
+        ('generator client {\n  relationMode = "prisma"\n}\n', None),
+    ],
+)
+def test_lexes_relation_mode(source: str, expected: Optional[str]) -> None:
+    assert parse_relation_mode(source) == expected
+
+
+def test_relation_mode_is_read_from_the_datasource_that_declares_it() -> None:
+    """A `prismaSchemaFolder` schema is concatenated before it reaches the lexer.
+
+    The datasource block can then sit after model blocks rather than at the top,
+    and the scan has to find it wherever it is.
+    """
+    source = 'model Child {\n  id String @id\n}\n\ndatasource db {\n  relationMode = "prisma"\n}\n'
+    assert parse_relation_mode(source) == 'prisma'
 
 
 # -- implicit many-to-many ---------------------------------------------------

@@ -92,8 +92,9 @@ production schema, `@db.*` covered 554 columns including every primary and
 foreign key, and reading them as `text` is a full-database rewrite rather than a
 post-cutover diff. See `01-field-report-response.md`.
 
-`relationMode` is in the same position — absent from the payload — and is
-**still open**. It is recoverable the same way if it becomes a priority.
+`relationMode` was in the same position — absent from the payload — and is now
+closed the same way: `parse_relation_mode` lexes it out of the datasource block,
+and `build_metadata` emits no foreign keys when it reads `prisma`.
 
 `tests/test_generation/test_dmmf_completeness.py` now asserts that the modelled
 field set covers the wire key set, so the next such gap fails a test instead of
@@ -509,7 +510,7 @@ prior gate is green **in CI**, not on a laptop.
 
 | stage | ships | gate |
 | --- | --- | --- |
-| **0** ✅ | DMMF gaps G1, G3, G4, G5-`schemas`; `schemaMetadata` emits the physical schema. `@db.*` closed in 1.1.0 by lexing the raw schema text, `@relation(map:)` in 1.2.0 the same way. **Left open:** `relationMode`, also not on the wire (§2.1) | golden-file test: the set of keys in the raw wire JSON equals the set of fields on each Pydantic model — zero silent drops. Plus absolute assertions on the reconstruction itself (`test_schema_metadata.py`), naming the exact table, column and constraint — a differential test against the query engine passes on any misreading both sides share |
+| **0** ✅ | DMMF gaps G1, G3, G4, G5-`schemas`; `schemaMetadata` emits the physical schema. `@db.*` closed in 1.1.0 by lexing the raw schema text, `@relation(map:)` in 1.2.0 and `@relation(onUpdate:)` / `relationMode` in 1.3.0, all the same way | golden-file test: the set of keys in the raw wire JSON equals the set of fields on each Pydantic model — zero silent drops. Plus absolute assertions on the reconstruction itself (`test_schema_metadata.py`), naming the exact table, column and constraint — a differential test against the query engine passes on any misreading both sides share |
 | **1** ✅ | `prisma.sa`: the schema half — `MetaData`/`Table` built from `schemaMetadata`. Prisma still executes queries. **Changed from the plan:** no `modelBackend = "sqlalchemy"` and no `PrismaRecordMixin` (§9.1) | stronger than the planned gate: `prisma db push` and `MetaData.create_all()` into two databases, `pg_dump --schema-only` **identical**. Empty autogenerate diff is necessary but not sufficient — it ignores FK actions, constraint names, index methods, column order and CHECKs |
 | **2** | migration CLI: `generate` / `baseline` / `verify` / `handover` / `doctor` | on a DB built by real `prisma migrate deploy`, handover completes and post-handover Gate A is empty; adding one column then produces **exactly** one `op.add_column` |
 | **3** | `engineType = "sqlalchemy"` — the compiler. Tier 1 CRUD first, then filters, relations, nested writes, aggregates | differential corpus T1–T6 + `databases/` suite under the new engine |
@@ -549,14 +550,13 @@ wrong, so the code raises or flags instead:
 | self-referential implicit m2m | which side is join column `A` is not in the DMMF | flagged `join_ambiguous`; traversal needs an explicit decision |
 | `@db.*` native types | not sent through the generator protocol at all (verified) | precision/length annotations invisible; recoverable only by lexing the schema text |
 | `@relation(onUpdate:)` | not sent either — a field declaring it arrives with `relationOnDelete` and no `relationOnUpdate` key (verified) | the emitter cannot tell "undeclared" from "declared Cascade"; hardcoding Prisma's default writes the wrong `ON UPDATE` on every relation that declares one |
-| `relationMode = "prisma"` | not sent either | the database has *no* FKs; the constraints we build would diff against every table |
+| `relationMode = "prisma"` | not sent either | the database has *no* FKs; lexed out of the datasource block, and no constraint is emitted when it is set |
 | any provider but PostgreSQL | type table not verified against a real `db push` | `UnsupportedProviderError` naming the provider |
 | an unmapped `@db.*` annotation | no verified type for it | raises naming the annotation, rather than falling back to the default type |
 
-Three annotations Prisma does not send in the DMMF are recovered by lexing the
-raw schema text (`generator/_native_types.py`): `@db.*`, `@relation(map:)` and
-`@relation(onUpdate:)`. `relationMode` is the remaining one and is recoverable
-the same way.
+Four annotations Prisma does not send in the DMMF are recovered by lexing the
+raw schema text (`generator/_native_types.py`): `@db.*`, `@relation(map:)`,
+`@relation(onUpdate:)` and the datasource's `relationMode`.
 
 ---
 

@@ -347,6 +347,9 @@ def _add_foreign_keys(
         if not relation['owner']:
             continue
 
+        if not _emits_foreign_keys(relation):
+            continue
+
         target = schema[relation['to']]
         table.append_constraint(
             sa.ForeignKeyConstraint(
@@ -357,6 +360,46 @@ def _add_foreign_keys(
                 onupdate=_on_update(relation),
             )
         )
+
+
+def _emits_foreign_keys(relation: Mapping[str, Any]) -> bool:
+    """Whether this relation is backed by a foreign key in the database.
+
+    `relationMode = "prisma"` means it is not: Prisma creates **no** foreign key
+    constraints — measured against `prisma db push` 5.19 on PostgreSQL, on model
+    tables and on implicit many-to-many join tables alike — and enforces
+    relations in the query engine instead. That is how PlanetScale and Vitess
+    users run.
+
+    Emitting the constraints anyway describes a database that does not exist:
+    `alembic revision --autogenerate` proposes to *add* one per relation, and
+    the DDL-equivalence gate fails on every table.
+
+    Prisma creates no index in their place either. Measured on the same push: an
+    unindexed relation scalar stays unindexed, and Prisma only warns — "relation
+    fields will not benefit from the index usually created by the relational
+    database under the hood ... We recommend adding an index manually". So the
+    right output here is nothing at all, not an index standing in for the
+    constraint; a schema that wants one writes `@@index`, and that arrives
+    through the normal index path.
+
+    `.get` rather than `[...]`: a client generated before `relation_mode` existed
+    carries no such key, and its absence means exactly what a declared `None`
+    means — the datasource is silent, which is Prisma's default of
+    `foreignKeys`.
+    """
+    mode = relation.get('relation_mode')
+    if mode is None or mode == 'foreignKeys':
+        return True
+    if mode == 'prisma':
+        return False
+
+    # Prisma accepts only those two. Guessing at a third would mean guessing at
+    # whether a whole schema's constraints exist.
+    raise NotImplementedError(
+        f'Unhandled relationMode: {mode!r}; expected "foreignKeys" or "prisma". '
+        'Whether the database has foreign keys at all cannot be guessed at.'
+    )
 
 
 def _on_delete(relation: Mapping[str, Any]) -> str:
@@ -421,36 +464,44 @@ def _build_join_table(
     left = schema[left_model]
     right = schema[right_model]
 
-    # Prisma owns both of the join table's foreign keys and rejects a schema that
-    # tries to say otherwise — "Referential actions on implicit many-to-many
-    # relations are not supported", verified against 5.19 — so `on_update` is
-    # necessarily absent here and this resolves to Prisma's default, CASCADE. It
-    # is still read through the same helper so the two can never drift apart.
-    # `ondelete` is *not*: `_on_delete` keys off `fk_required`, which no side of
-    # an implicit m2m carries, and would answer SET NULL for columns Prisma
-    # creates NOT NULL.
-    on_update = _on_update(relation)
-
-    table = sa.Table(
-        name,
-        md,
+    args: List[Any] = [
         sa.Column(JOIN_LEFT, _referenced_type(md, left), nullable=False),
         sa.Column(JOIN_RIGHT, _referenced_type(md, right), nullable=False),
-        sa.ForeignKeyConstraint(
-            [JOIN_LEFT],
-            [f'{left["table"]}.{left["primary_key"]["columns"][0]}'],
-            name=f'{name}_{JOIN_LEFT}_fkey',
-            ondelete='CASCADE',
-            onupdate=on_update,
-        ),
-        sa.ForeignKeyConstraint(
-            [JOIN_RIGHT],
-            [f'{right["table"]}.{right["primary_key"]["columns"][0]}'],
-            name=f'{name}_{JOIN_RIGHT}_fkey',
-            ondelete='CASCADE',
-            onupdate=on_update,
-        ),
-    )
+    ]
+
+    # Under `relationMode = "prisma"` the join table has no foreign keys either —
+    # measured, and easy to miss, because the join table is not a model and
+    # nothing in the schema text mentions its constraints.
+    if _emits_foreign_keys(relation):
+        # Prisma owns both of the join table's foreign keys and rejects a schema
+        # that tries to say otherwise — "Referential actions on implicit
+        # many-to-many relations are not supported", verified against 5.19 — so
+        # `on_update` is necessarily absent here and this resolves to Prisma's
+        # default, CASCADE. It is still read through the same helper so the two
+        # can never drift apart. `ondelete` is *not*: `_on_delete` keys off
+        # `fk_required`, which no side of an implicit m2m carries, and would
+        # answer SET NULL for columns Prisma creates NOT NULL.
+        on_update = _on_update(relation)
+        args.extend(
+            [
+                sa.ForeignKeyConstraint(
+                    [JOIN_LEFT],
+                    [f'{left["table"]}.{left["primary_key"]["columns"][0]}'],
+                    name=f'{name}_{JOIN_LEFT}_fkey',
+                    ondelete='CASCADE',
+                    onupdate=on_update,
+                ),
+                sa.ForeignKeyConstraint(
+                    [JOIN_RIGHT],
+                    [f'{right["table"]}.{right["primary_key"]["columns"][0]}'],
+                    name=f'{name}_{JOIN_RIGHT}_fkey',
+                    ondelete='CASCADE',
+                    onupdate=on_update,
+                ),
+            ]
+        )
+
+    table = sa.Table(name, md, *args)
 
     sa.Index(f'{name}_AB_unique', table.c[JOIN_LEFT], table.c[JOIN_RIGHT], unique=True)
     sa.Index(f'{name}_{JOIN_RIGHT}_index', table.c[JOIN_RIGHT])

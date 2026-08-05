@@ -45,6 +45,12 @@ from ._scan import (
     same_expression,
 )
 
+# The same lexer the generator uses to recover `relationMode` from the raw
+# schema text, rather than a second regex here: the §0 scope check and the
+# metadata builder have to agree about what mode a schema is in, and two
+# independent readings of the same annotation is how they stop agreeing.
+from ..generator._native_types import parse_relation_mode
+
 __all__ = (
     'Finding',
     'Diagnosis',
@@ -841,7 +847,6 @@ def schema_facts(
 
 
 _PROVIDER = re.compile(r'provider\s*=\s*"([^"]+)"')
-_RELATION_MODE = re.compile(r'relationMode\s*=\s*"([^"]+)"')
 _DATASOURCE = re.compile(r'datasource\s+\w+\s*\{([^}]*)\}', re.DOTALL)
 _NATIVE_TYPE = re.compile(r'@db\.([A-Za-z]+)')
 
@@ -861,13 +866,13 @@ def _scope_check(schema_paths: Sequence[Path], root: Optional[Path]) -> ScopeChe
 
         datasource = _DATASOURCE.search(text)
         if datasource is not None:
-            block = datasource.group(1)
-            provider = _PROVIDER.search(block)
+            provider = _PROVIDER.search(datasource.group(1))
             if provider is not None:
                 scope.provider = provider.group(1)
-            relation_mode = _RELATION_MODE.search(block)
-            if relation_mode is not None:
-                scope.relation_mode = relation_mode.group(1)
+
+        relation_mode = parse_relation_mode(text)
+        if relation_mode is not None:
+            scope.relation_mode = relation_mode
 
         for match in _NATIVE_TYPE.finditer(text):
             natives[match.group(1)] = natives.get(match.group(1), 0) + 1
@@ -893,13 +898,15 @@ def _provider_check(scope: ScopeCheck) -> Check:
 
 
 def _relation_mode_check(scope: ScopeCheck, saw_files: bool) -> Check:
-    name = 'relationMode is not "prisma"'
+    name = 'relationMode'
     if scope.relation_mode == 'prisma':
         return Check(
             name,
             'fail',
-            'prisma — the database then has no foreign keys at all, and every FK this migration creates '
-            'is a diff against every table (§0)',
+            'prisma — the database has no foreign keys at all; Prisma enforces relations in the query '
+            'engine, and SQLAlchemy will not. The emitted metadata now matches that database, so this '
+            'is no longer a DDL problem: it is a decision about who enforces referential integrity '
+            'after the migration (§0)',
         )
     if not saw_files:
         return Check(name, 'unknown', 'no schema was read')

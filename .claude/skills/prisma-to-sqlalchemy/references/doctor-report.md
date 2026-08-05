@@ -69,7 +69,7 @@ A list of `{name, status, detail}` where status is `pass` / `fail` / `unknown`.
 | name | `fail` means |
 | --- | --- |
 | `provider is PostgreSQL` | the type table has only been verified against PostgreSQL — migration ends here |
-| `relationMode is not "prisma"` | the database has no foreign keys at all, so every FK the migration creates is a diff against every table — ends here |
+| `relationMode is not "prisma"` | the database has no foreign keys at all — Prisma enforces relations in the query engine and SQLAlchemy will not. Since `prisma.sa` 1.3.0 the emitted DDL matches that database, so this is no longer a diff; it still ends here, because referential integrity stops being enforced |
 
 `unknown` means no `datasource` block was read: the `--schema` path was wrong.
 Fix the path rather than proceeding on an unread schema.

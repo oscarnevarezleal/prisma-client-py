@@ -38,6 +38,9 @@ from prisma.generator.models import (
 # PostgreSQL schema. Regenerate with PRISMA_PY_DEBUG_GENERATOR=1.
 FIXTURE = Path(__file__).parent / 'data' / 'dmmf_wire_sample.json'
 
+#: The same, for a schema whose datasource sets `relationMode = "prisma"`.
+RELATION_MODE_FIXTURE = Path(__file__).parent / 'data' / 'relation_mode_sample.json'
+
 
 def aliases(model: type) -> Set[str]:
     """Every wire key the model accepts (alias if set, else the field name)."""
@@ -58,6 +61,48 @@ def wire_fixture() -> Dict[str, Any]:
     # missing one is a broken checkout rather than a reason to skip
     assert FIXTURE.exists(), f'wire sample not recorded at {FIXTURE}'
     return cast('Dict[str, Any]', json.loads(FIXTURE.read_text()))
+
+
+@pytest.fixture(scope='module', name='relation_mode_wire')
+def relation_mode_wire_fixture() -> Dict[str, Any]:
+    assert RELATION_MODE_FIXTURE.exists(), f'wire sample not recorded at {RELATION_MODE_FIXTURE}'
+    return cast('Dict[str, Any]', json.loads(RELATION_MODE_FIXTURE.read_text()))
+
+
+def test_relation_mode_is_not_on_the_wire(relation_mode_wire: Dict[str, Any]) -> None:
+    """The measurement that justifies lexing `relationMode` out of the schema text.
+
+    A datasource in that mode arrives carrying exactly the same keys as one in
+    the default mode --- `name`, `provider`, `activeProvider`, `url`, `schemas`,
+    `sourceFilePath` --- and nothing anywhere in the payload says which mode it
+    is. Since the mode decides whether the database has foreign keys *at all*,
+    a reader that cannot see it describes a different database.
+
+    Pinned as an absence, like `onUpdate` below, so that a Prisma release which
+    starts sending it fails here rather than going unnoticed.
+    """
+    (datasource,) = relation_mode_wire['datasources']
+    assert not [key for key in datasource if 'relation' in key.lower()]
+    assert not [key for key in datasource if 'mode' in key.lower()]
+
+    # ...and the schema really is in that mode, so the absence above is Prisma
+    # dropping it rather than the schema never asking.
+    assert 'relationMode = "prisma"' in relation_mode_wire['datamodel']
+
+    # the whole payload, not just the datasource entry: nothing else carries it
+    # either, and `datamodel` is the raw schema text this is recovered from
+    without_schema_text = {key: value for key, value in relation_mode_wire.items() if key != 'datamodel'}
+    assert 'relationMode' not in json.dumps(without_schema_text)
+
+
+def test_relation_mode_sample_covers_wire(relation_mode_wire: Dict[str, Any]) -> None:
+    """The second sample is held to the same no-silent-drops standard."""
+    models = relation_mode_wire['dmmf']['datamodel']['models']
+    fields = [f for model in models for f in model['fields']]
+
+    assert not wire_keys(models) - aliases(Model)
+    assert not wire_keys(fields) - aliases(Field)
+    assert not wire_keys(relation_mode_wire['datasources']) - aliases(Datasource)
 
 
 def test_datamodel_covers_wire(wire: Dict[str, Any]) -> None:

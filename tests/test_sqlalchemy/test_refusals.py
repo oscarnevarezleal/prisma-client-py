@@ -184,6 +184,7 @@ def relation(**overrides: Any) -> Dict[str, Any]:
         'fk_required': False,
         'on_delete': None,
         'on_update': None,
+        'relation_mode': None,
         'fk_name': 'Thing_parentId_fkey',
         'join_ambiguous': False,
     }
@@ -283,6 +284,53 @@ def test_metadata_without_on_update_still_builds() -> None:
     del schema['Thing']['relations']['parent']['on_update']
 
     assert only_fk(build_metadata(schema, {}, 'postgresql')).onupdate == 'CASCADE'
+
+
+# -- relationMode --------------------------------------------------------------
+
+
+def foreign_keys(built: Any) -> List[Any]:
+    return [c for c in built.tables['Thing'].constraints if isinstance(c, sa.ForeignKeyConstraint)]
+
+
+@pytest.mark.parametrize('declared', [None, 'foreignKeys'])
+def test_relation_mode_with_foreign_keys_emits_the_constraint(declared: Any) -> None:
+    """`None` is "the datasource did not say", which is Prisma's default."""
+    built = build_metadata(self_relation_schema(relation_mode=declared), {}, 'postgresql')
+    assert [str(c.name) for c in foreign_keys(built)] == ['Thing_parentId_fkey']
+
+
+def test_relation_mode_prisma_emits_no_constraint() -> None:
+    """Prisma creates none, so a constraint here diffs against every table.
+
+    And nothing stands in for it: Prisma leaves the relation scalar unindexed
+    and only warns, so an index emitted in the constraint's place is a diff of
+    its own.
+    """
+    built = build_metadata(self_relation_schema(relation_mode='prisma'), {}, 'postgresql')
+    assert foreign_keys(built) == []
+    assert [index.name for index in built.tables['Thing'].indexes] == []
+    # the table and its columns are otherwise untouched
+    assert sorted(built.tables['Thing'].c.keys()) == ['id', 'parentId']
+
+
+def test_unknown_relation_mode_refuses() -> None:
+    """Whether the database has foreign keys at all is not something to guess."""
+    with pytest.raises(NotImplementedError, match='emulated'):
+        build_metadata(self_relation_schema(relation_mode='emulated'), {}, 'postgresql')
+
+
+def test_metadata_without_relation_mode_still_builds() -> None:
+    """A client generated before `relation_mode` existed has no such key.
+
+    Retro-compatibility, and specifically byte-identical DDL: the absent key has
+    to mean `foreignKeys`, or upgrading `prisma.sa` without regenerating drops
+    every constraint in the schema.
+    """
+    schema = self_relation_schema()
+    del schema['Thing']['relations']['parent']['relation_mode']
+
+    assert [str(c.name) for c in foreign_keys(build_metadata(schema, {}, 'postgresql'))] == ['Thing_parentId_fkey']
 
 
 # -- schemas the builder should handle without special-casing ------------------

@@ -292,6 +292,77 @@ def test_self_many_to_many_join_table(metadata: sa.MetaData) -> None:
         assert [e.target_fullname for e in fk(metadata, '_similar', f'_similar_{name}_fkey').elements] == ['labels.id']
 
 
+# -- relationMode = "prisma" -------------------------------------------------
+#
+# The database then has no foreign keys at all. `test_ddl_equivalence_relation_
+# mode.py` proves that against a real `prisma db push`; these pin the individual
+# decisions so a regression says which one broke.
+
+
+def test_relation_mode_prisma_emits_no_foreign_keys(relation_mode_metadata: sa.MetaData) -> None:
+    constraints = [
+        (name, c.name)
+        for name, t in relation_mode_metadata.tables.items()
+        for c in t.constraints
+        if isinstance(c, sa.ForeignKeyConstraint)
+    ]
+    assert constraints == []
+
+
+def test_relation_mode_prisma_leaves_the_join_table_otherwise_intact(
+    relation_mode_metadata: sa.MetaData,
+) -> None:
+    """The join table is the easiest half to forget: it has no model.
+
+    Columns, nullability and both indexes are unchanged; only the two foreign
+    keys are gone.
+    """
+    join = table(relation_mode_metadata, '_GroupToMember')
+
+    assert [c.name for c in join.c] == ['A', 'B']
+    assert all(not c.nullable for c in join.c)
+    assert not [c for c in join.constraints if isinstance(c, sa.ForeignKeyConstraint)]
+
+    indexes = {index.name: (index.unique, [c.name for c in index.columns]) for index in join.indexes}
+    assert indexes == {
+        '_GroupToMember_AB_unique': (True, ['A', 'B']),
+        '_GroupToMember_B_index': (False, ['B']),
+    }
+
+
+def test_relation_mode_prisma_invents_no_index_for_the_missing_constraint(
+    relation_mode_metadata: sa.MetaData,
+) -> None:
+    """Measured: Prisma creates none and only warns.
+
+    An index emitted here would look like the helpful thing to do and would be a
+    diff on every relation scalar in the schema.
+    """
+    members = table(relation_mode_metadata, 'members')
+    indexed = {str(index.name): [c.name for c in index.columns] for index in members.indexes}
+
+    assert [name for name, columns in indexed.items() if columns == ['tenant_id']] == []
+    # the declared `@@index([managerId])` is still there, so this is not simply
+    # "no indexes on this table"
+    assert indexed['member_manager_idx'] == ['managerId']
+
+
+def test_relation_mode_prisma_keeps_the_rest_of_the_schema(relation_mode_metadata: sa.MetaData) -> None:
+    """Only the constraints go. Names, defaults and sequences are untouched."""
+    assert sorted(relation_mode_metadata.tables) == [
+        '_GroupToMember',
+        'configs',
+        'groups',
+        'members',
+        'regions',
+        'seats',
+        'tenants',
+    ]
+    tenants = table(relation_mode_metadata, 'tenants')
+    assert [c.name for c in tenants.primary_key.columns] == ['id']
+    assert isinstance(tenants.c['tier'].type, postgresql.ENUM)
+
+
 # -- providers ---------------------------------------------------------------
 
 

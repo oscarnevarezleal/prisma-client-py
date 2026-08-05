@@ -405,7 +405,7 @@ def test_scope_check_reads_the_raw_schema(tmp_path: Path) -> None:
     assert facts.scope.native_types == {'Uuid': 1, 'VarChar': 1}
     assert [check.name for check in facts.scope.checks if check.status == 'pass'] == [
         'provider is PostgreSQL',
-        'relationMode is not "prisma"',
+        'relationMode',
     ]
 
 
@@ -414,7 +414,7 @@ def test_scope_check_fails_a_non_postgres_provider(tmp_path: Path) -> None:
     schema.write_text('datasource db {\n  provider = "mysql"\n  relationMode = "prisma"\n}\n')
     facts = schema_facts([schema], available=False)
     failed = [check.name for check in facts.scope.checks if check.status == 'fail']
-    assert failed == ['provider is PostgreSQL', 'relationMode is not "prisma"']
+    assert failed == ['provider is PostgreSQL', 'relationMode']
 
 
 def test_scope_check_walks_a_schema_folder(tmp_path: Path) -> None:
@@ -561,7 +561,7 @@ def test_doctor_command_discovers_a_schema_folder(
     payload = json.loads(result.output)
     assert payload['schema']['scope_check']['paths'] == ['prisma/db.prisma']
     failed = [check for check in payload['schema']['scope_check']['checks'] if check['status'] == 'fail']
-    assert [check['name'] for check in failed] == ['relationMode is not "prisma"']
+    assert [check['name'] for check in failed] == ['relationMode']
 
 
 def test_doctor_command_with_no_schema_anywhere(

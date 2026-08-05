@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 #: Both this fork and upstream report `prisma.__version__ == '0.15.0'`, so there
 #: is otherwise no way to tell them apart, or to tell which set of fixes a given
 #: checkout carries. Bump it whenever the emitted schema changes.
-__version__ = '1.2.0'
+__version__ = '1.3.0'
 
 __all__ = (
     '__version__',
