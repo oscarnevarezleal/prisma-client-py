@@ -30,6 +30,10 @@ psql "$BENCH_DATABASE_URL" -f $REPO/benchmarks/pg-lab/seed.sql
 # 3. the loop
 python $REPO/benchmarks/pg-lab/optimize_loop.py --workdir . --repeats 3 \
     --json loop_results.json
+
+# 4. phase 2, starting from whatever phase 1 actually settled on
+python $REPO/benchmarks/pg-lab/optimize_loop.py --workdir . --repeats 3 \
+    --phase 2 --phase1-json loop_results.json --json loop_phase2.json
 ```
 
 Each loop iteration emits one JSON line (`ACCEPT`/`REJECT` + scores); the run
@@ -39,9 +43,9 @@ workdir.
 ## The candidate ladder
 
 Applied cumulatively, in expected-value order; a candidate that fails to
-generate or crashes the workload is auto-rejected (that's the filter that
-catches behavior-changing options like `scalarFieldsOnly` under an
-`include=`-heavy workload):
+generate, crashes the workload, or produces output that is not a full set of
+metrics is auto-rejected (that's the filter that catches behavior-changing
+options like `scalarFieldsOnly` under an `include=`-heavy workload):
 
 1. `recursive_type_depth = -1` — true-recursive types
 2. `minimalRuntime = true` — query-arg types into `.pyi` stubs
@@ -92,16 +96,22 @@ see `docs/contributing/unified-sync-async-client.md`), stub-splitting
 
 ## Phase 2: foundational mechanisms (`--phase 2`)
 
-Phase 1 exhausted the existing generator options. Phase 2 sets the phase-1
-winner as the new baseline and walks a ladder of mechanisms implemented in
-the fork for this purpose (none exist upstream):
+Phase 1 exhausted the existing generator options. Phase 2 walks a ladder of
+mechanisms implemented in the fork for this purpose (none exist upstream), on
+top of the configuration a phase-1 run settled on. That baseline is read out of
+the phase-1 result file (`--phase1-json`, required with `--phase 2`) rather
+than restated in the script, so changing the ladder, the threshold or the
+guardrail cannot leave phase 2 measuring against a winner no run ever picked.
 
-| mechanism | switch | what it does |
-| --- | --- | --- |
-| lazy actions | `lazyActions = true` | action namespaces + the actions module import deferred to first DB access |
-| shared engine | `PRISMA_PY_SHARED_ENGINE=1` | sync + async clients attach to one refcounted query-engine process |
-| fast parse | `PRISMA_PY_FAST_PARSE=1` | trusted engine responses skip validation (compiled converters + `model_construct`) |
-| slim models | `modelBackend = "slim"` | pydantic-free `__slots__` records deserialized by codegen-unrolled converters |
+The ladder, in order:
+
+| # | mechanism | switch | what it does |
+| - | --- | --- | --- |
+| 1 | lazy actions | `lazyActions = true` | action namespaces + the actions module import deferred to first DB access |
+| 2 | shared engine | `PRISMA_PY_SHARED_ENGINE=1` | sync + async clients attach to one refcounted query-engine process |
+| 3 | fast parse | `PRISMA_PY_FAST_PARSE=1` | trusted engine responses skip validation (compiled converters + `model_construct`) |
+| 4 | slim models | `modelBackend = "slim"` | pydantic-free `__slots__` records deserialized by codegen-unrolled converters |
+| 5 | msgspec models | `modelBackend = "msgspec"` (+ `separateModelFiles = false`) | C-decoded `msgspec.Struct` records |
 
 Run of 2026-08-03, v2 (after fixes below; raw data `results-phase2-2026-08-03.json`):
 
@@ -112,6 +122,15 @@ Run of 2026-08-03, v2 (after fixes below; raw data `results-phase2-2026-08-03.js
 | 2 | shared engine | REJECT (±noise, see below) | 64.1 | 319 | 27.4 | 95.3 |
 | 3 | fast parse | REJECT (slower) | 64.2 | 305 | 29.9 | 94.2 |
 | 4 | `modelBackend = "slim"` | **ACCEPT −2.9%** | **58.3** | 328 | 26.4 | **90.9** |
+| 5 | `modelBackend = "msgspec"` | *not in this run — see below* | — | — | — | — |
+
+**That recorded run is four rungs, not five.** The msgspec rung was added to the
+ladder afterwards, with the backend itself; nobody has re-run the phase-2 loop
+since, so `results-phase2-2026-08-03.json` contains no msgspec row and its
+numbers are not a measurement of the current ladder. msgspec-vs-slim was
+pursued with `head2head.py` instead of by re-running this loop — with the
+caveats recorded in that section. Re-running `--phase 2` will produce a fifth
+rung; until someone does, this table is the honest state of it.
 
 Cumulative across both phases: **334.8 → 58.3 MB (−83%) and 3.9 s → 0.33 s.**
 
@@ -143,17 +162,28 @@ What the loop taught us (the rejections are the valuable part):
 ## Scorecard: where we ended up vs the baseline
 
 One interleaved run of every configuration against the same schema, database
-and workload (`head2head.py --repeats 5 --rounds 25`; raw data in
+and workload (`head2head.py --set configs --repeats 5 --rounds 25`; raw data in
 `results-scorecard-2026-08-03.json`). `baseline` is what an upstream user gets
 today: default options, two separately generated packages for sync + async.
 
-| variant | RSS (MB) | import (ms) | connect (ms) | queries (ms) | composite | vs baseline |
+Each row is the best known configuration for its backend, so **rows differ from
+each other in more than one option** — `config-pydantic` keeps
+`separateModelFiles` and no `lazyActions`; `config-msgspec` cannot use
+`separateModelFiles` at all. Read them against `baseline`, which is the
+question this table answers; for a controlled backend comparison see the next
+section.
+
+| variant (`--set configs`) | RSS (MB) | import (ms) | connect (ms) | queries (ms) | composite | vs baseline |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| baseline | 337.6 | 4208 | 177.0 | 27.96 | 289.6 | — |
-| generator options only | 66.9 | 354 | 147.5 | 27.73 | 99.2 | **−65.7%** |
-| + `slim` backend | 58.3 | 349 | 146.6 | 26.50 | 94.3 | **−67.4%** |
-| + `msgspec` backend | 59.2 | 373 | 154.5 | 27.49 | 98.4 | **−66.0%** |
-| + shared engine + raw decode | 59.2 | 366 | 148.4 | 27.91 | 97.3 | **−66.4%** |
+| `baseline` | 337.6 | 4208 | 177.0 | 27.96 | 289.6 | — |
+| `config-pydantic` (generator options only) | 66.9 | 354 | 147.5 | 27.73 | 99.2 | **−65.7%** |
+| `config-slim` | 58.3 | 349 | 146.6 | 26.50 | 94.3 | **−67.4%** |
+| `config-msgspec` | 59.2 | 373 | 154.5 | 27.49 | 98.4 | **−66.0%** |
+| `config-final` (+ shared engine + raw decode) | 59.2 | 366 | 148.4 | 27.91 | 97.3 | **−66.4%** |
+
+The recorded JSON predates the rename and stores these under `baseline`,
+`pydantic`, `slim`, `msgspec`, `final`. The *configurations* are unchanged, so
+the numbers still describe these rows; only the labels moved.
 
 **Headline: 337.6 → 59.2 MB (−82%) and 4.2 s → 0.37 s import (−91%), with query
 latency unchanged.**
@@ -168,7 +198,9 @@ Four things this makes honest that a composite number alone would hide:
   each other and the ordering has flipped between runs (msgspec led the
   earlier head-to-head, slim leads this one). Pick on constraints, not on the
   composite: msgspec is faster on bulk deserialization and is a maintained C
-  library; slim has no third-party dependency and slightly lower RSS.
+  library; slim has no third-party dependency and slightly lower RSS. Note
+  that these two rows also differ in `separateModelFiles`, so part of that ~4%
+  is not the backend — one more reason not to rank them off this table.
 - **Query latency is flat across every variant** (27.96 → 26.5–27.9 ms). That
   is the expected result given that ~90% of a query is the engine — see
   "Where the time actually goes" below. No client-side change moves it.
@@ -184,30 +216,47 @@ Four things this makes honest that a composite number alone would hide:
 The ladder measures each candidate once against a moving baseline — right for
 exploration, noise-sensitive for close calls (a contended run of the ladder
 mis-ranked backends whose true gap is a few percent). `head2head.py` settles
-those: it generates each end-state config once, then interleaves measurement
-passes (A,B,C,A,B,C,...) so machine drift lands on every variant equally.
+those: it generates each variant once, then interleaves measurement passes
+(A,B,C,A,B,C,… rotated by pass index) so machine drift lands on every variant
+equally.
 
-7 passes x 30 rounds, all on `recursive_type_depth=-1` + `minimalRuntime` +
-unified package + `lazyActions` (raw data `results-h2h-2026-08-03.json`):
+`--set backends` holds every non-backend generator option identical across the
+three variants, so `modelBackend` is the only thing that differs.
+`separateModelFiles` is held **off** for all three: msgspec resolves cyclic
+relation references against a single module and cannot use it, and leaving it
+on for the other two folds a lazy-per-model-file win into a number labelled
+"backend".
 
-| backend | RSS (MB) | import (ms) | queries (ms) | composite |
+**No run of `--set backends` has been recorded yet.** The table below is the
+run of 2026-08-03 (7 passes x 30 rounds, raw data
+`results-h2h-2026-08-03.json`), and the variants it measured were the *end-state
+configs*, not an isolated backend comparison: the `pydantic` variant had no
+`lazyActions`, and `separateModelFiles` was on for `pydantic`/`slim` and off
+for `msgspec`. Those options move import, memory and the composite, so the
+differences below are not attributable to the backend alone.
+
+| end-state config, 2026-08-03 | RSS (MB) | import (ms) | queries (ms) | composite |
 | --- | ---: | ---: | ---: | ---: |
-| `pydantic` (default) | 66.9 | 366 | 29.85 | 100.84 |
-| `slim` | **58.4** | **347** | 27.49 | 94.37 |
-| `msgspec` | 59.3 | 353 | **26.29** | **94.07** |
+| `pydantic` (default backend, no `lazyActions`) | 66.9 | 366 | 29.85 | 100.84 |
+| `slim` (+ `lazyActions`, `separateModelFiles`) | **58.4** | **347** | 27.49 | 94.37 |
+| `msgspec` (+ `lazyActions`, no `separateModelFiles`) | 59.3 | 353 | **26.29** | **94.07** |
 
 Takeaways:
 
-- **`msgspec` is the recommended alternative backend**: best composite, the
-  lowest query latency of anything measured (−12% vs pydantic), RSS within
-  1 MB of slim — and its speed comes from a maintained C library instead of
-  slim's bespoke exec-compiled deserializers. In microbenchmarks msgspec
-  converts 5-9x faster than pydantic-core; end-to-end that compresses to
-  ~1-3.5 ms/query because the engine round-trip dominates — which is also the
-  pointer to the next structural win: `msgspec.json.Decoder.decode(raw_bytes)`
-  in the engine HTTP layer would skip the `response.json()` dict stage
-  entirely (bytes -> typed structs in one C pass, 32 us vs ~210 us for this
-  payload shape).
+- **`msgspec` is the recommended alternative backend**, on the numbers above
+  plus what is not contaminated by the confound: it has the lowest query
+  latency of anything measured here, RSS within 1 MB of slim, and its speed
+  comes from a maintained C library instead of slim's bespoke exec-compiled
+  deserializers. Query latency is the least affected by the extra options in
+  play (`lazyActions` and `separateModelFiles` are import- and memory-side),
+  but the composite and import columns should not be read as backend deltas
+  until `--set backends` has actually been run.
+- In microbenchmarks msgspec converts 5-9x faster than pydantic-core;
+  end-to-end that compresses to ~1-3.5 ms/query because the engine round-trip
+  dominates — which is also the pointer to the next structural win:
+  `msgspec.json.Decoder.decode(raw_bytes)` in the engine HTTP layer would skip
+  the `response.json()` dict stage entirely (bytes -> typed structs in one C
+  pass, 32 us vs ~210 us for this payload shape).
 - msgspec structs resolve cyclic relation references against one module, so
   `modelBackend = "msgspec"` generates a single `models.py` and is
   incompatible with `separateModelFiles`. That trade is cheap: structs
@@ -270,23 +319,32 @@ engine.
 
 Everything above optimizes the Python side. This measures how big that side is,
 by timing the same logical query at three levels — bare postgres (psycopg, no
-prisma), the engine executing raw SQL (`query_raw`, no GraphQL planning), and
-the full ORM path — and attributing the differences.
+prisma), the same SQL through the client and engine (`query_raw`, no structured
+query to plan), and the full ORM path — and attributing the differences.
 
 | level | 1 row | 400 rows |
 | --- | ---: | ---: |
 | postgres itself (psycopg) | 0.17 ms | 0.90 ms |
-| engine, raw SQL (`query_raw`) | 1.40 ms | 4.08 ms |
-| engine, full ORM path | 1.96 ms | 7.56 ms |
+| prisma stack, raw SQL (`query_raw`) | 1.40 ms | 4.08 ms |
+| prisma stack, full ORM path | 1.96 ms | 7.56 ms |
 
 | attribution | 1 row | 400 rows |
 | --- | ---: | ---: |
-| postgres itself | 0.17 ms (**9%**) | 0.90 ms (**12%**) |
-| engine transport + execution | 1.23 ms (63%) | 3.18 ms (42%) |
-| GraphQL planning + serialization | 0.55 ms (28%) | 3.48 ms (46%) |
+| postgres itself (psycopg) | 0.17 ms (**9%**) | 0.90 ms (**12%**) |
+| client + engine, same SQL | 1.23 ms (63%) | 3.18 ms (42%) |
+| structured query on top of that | 0.55 ms (28%) | 3.48 ms (46%) |
 
-**The database is ~10% of a Prisma query. The query engine is ~90%.** The same
-query is 8-12x slower through Prisma than through psycopg.
+**The database is ~10% of a Prisma query. Everything above it is ~90%.** The
+same query is 8-12x slower through Prisma than through psycopg.
+
+**Neither difference is query-engine overhead in isolation**, and the script
+does not claim otherwise. Row 2 spans the Python client's request handling, the
+HTTP round-trip, the engine's connector and execution, and the client's decode
+of the reply. Row 3 additionally spans GraphQL parse/plan, the engine's result
+serialization *and* record construction — which psycopg never does, since it
+returns plain tuples. These are end-to-end differences between two stacks;
+splitting the engine process out from the Python client would need
+instrumentation inside the engine, which nothing here has.
 
 Ruled out as explanations (both measured, both fine):
 
@@ -297,8 +355,9 @@ Ruled out as explanations (both measured, both fine):
 - **Concurrency serialization** — throughput improves under load
   (2.5 ms/query sequential → ~1.6 ms/query at 80+ concurrent).
 
-So the overhead is intrinsic to the binary query engine: a subprocess hop plus
-GraphQL parse/plan/serialize on every call.
+With those ruled out, what remains is structural to the out-of-process design:
+a subprocess hop and a GraphQL parse/plan/serialize on every call, plus the
+client-side work at each end of it.
 
 ### What this means
 
@@ -306,16 +365,43 @@ GraphQL parse/plan/serialize on every call.
   and import time (−92%) are large and worth having. Query latency is not
   where a Python client can win: even eliminating *all* Python deserialization
   would leave ~88% of query time untouched.
-- **`query_raw` is the biggest available latency lever** — it skips GraphQL
-  planning and serialization for 28% (1 row) to 46% (400 rows). Model-scoped
+- **`query_raw` is the biggest available latency lever** — skipping the
+  structured-query path saves 28% (1 row) to 46% (400 rows). Model-scoped
   `Model.prisma().query_raw(...)` still returns typed records, so hot paths can
   use it without giving up the model layer.
-- **If query latency is the binding constraint, the engine is the thing to
-  replace, not the client.** A driver-level stack (SQLAlchemy/psycopg) removes
-  the ~90% rather than optimizing the ~10% — which is the trade
+- **If query latency is the binding constraint, the out-of-process design is
+  the thing to replace, not the client's deserializer.** A driver-level stack
+  (SQLAlchemy/psycopg) removes the ~90% rather than optimizing the ~10% —
+  which is the trade
   [`docs/migrating-to-sqlalchemy.md`](../../docs/migrating-to-sqlalchemy.md)
   lays out. Prisma's value is the schema/typing/migration workflow; this is
   what it costs per query.
+
+## Prisma vs SQLAlchemy Core (`sa_vs_engine.py`)
+
+The same four queries against the same rows, Prisma client vs SQLAlchemy Core
+over tables built by `prisma.sa` from the same schema metadata. Interleaved and
+direction-alternated, like everything else here.
+
+**Both sides must produce the same thing, or the comparison is not one.** The
+SQLAlchemy `find_many_include` runs the three-query shape the engine itself
+uses (parents, authors, comments) *and then groups the comments by post and
+attaches author and comments to each parent*, inside the timed section — that
+is what `include=` means on the Prisma side, and timing only the three SELECTs
+would report a smaller amount of work as a faster one. Equivalence is asserted
+before timing, per row: same post ids in the same order, same author id on each
+post, same comment id set on each post.
+
+What the SQLAlchemy side still does not do is build record objects. That is not
+folded into the table; it is measured separately and printed under the results
+with its size as a share of the SQLAlchemy total.
+
+> **`results-sa-vs-engine-2026-08-03.json` predates the grouping fix.** It was
+> recorded when the SQLAlchemy `find_many_include` returned three unassociated
+> row lists, so its `find_many_include` figure — and therefore the total and the
+> "% saved" derived from it — describes less work than the query now does. The
+> other three queries are unaffected. Re-run the script to get a comparable
+> number; the file has deliberately been left as recorded.
 
 ## Notes
 

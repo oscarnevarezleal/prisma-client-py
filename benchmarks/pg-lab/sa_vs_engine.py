@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import sys
 import json
+import math
 import time
 import argparse
 import statistics
@@ -40,8 +41,14 @@ def median_ms(samples: List[float]) -> float:
 
 
 def p90_ms(samples: List[float]) -> float:
+    """Nearest-rank p90: the smallest value at or above 90% of the samples.
+
+    `int(len * 0.9)` picks the 91st of 100 ordered values, one rank high, and
+    raises `IndexError` outright when every sample lands in the last decile of a
+    short run.
+    """
     ordered = sorted(samples)
-    return round(ordered[int(len(ordered) * 0.9)] * 1000, 3)
+    return round(ordered[math.ceil(len(ordered) * 0.9) - 1] * 1000, 3)
 
 
 # -- the four queries, in both dialects ---------------------------------------

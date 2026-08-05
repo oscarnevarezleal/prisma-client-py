@@ -229,7 +229,8 @@ python benchmarks/pg-lab/optimize_loop.py  --workdir . --repeats 3   # the auton
 python benchmarks/pg-lab/head2head.py      --workdir . --repeats 5   # scorecard vs baseline
 python benchmarks/pg-lab/rawdecode_bench.py --workdir . --passes 9   # raw-decode A/B
 python benchmarks/pg-lab/where_time_goes.py --workdir .              # db vs engine attribution
-python benchmarks/pg-lab/sa_vs_engine.py   --workdir . --package pkg_sync   # prisma vs SQLAlchemy Core
+BENCH_DATABASE_URL=postgresql://... python benchmarks/pg-lab/sa_vs_engine.py \
+    --workdir . --package pkg_sync   # prisma vs SQLAlchemy Core
 ```
 
 Raw data for every table above is committed alongside the harnesses as
