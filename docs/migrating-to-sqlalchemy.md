@@ -75,7 +75,9 @@ one.
 
 **The absolute saving is small.** The whole 5.01 ms in that table is the total
 across four queries — 1.4 ms on a `find_unique`, 1.85 ms on an include. The
-database is ~10% of a Prisma query and the engine is the other ~90%, so the
+database is ~10% of a Prisma query and everything above it is the other ~90%
+(the benchmark cannot split that remainder between the engine process and the
+client — see `docs/performance-findings.md`), so the
 *ceiling* on this migration is real and large — but a ceiling is not a benefit,
 and single-digit milliseconds are irrelevant to most request paths. Check where
 your latency actually lives first. If it is in the queries, note that `query_raw`

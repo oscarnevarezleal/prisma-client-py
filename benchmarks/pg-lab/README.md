@@ -202,7 +202,7 @@ Four things this makes honest that a composite number alone would hide:
   that these two rows also differ in `separateModelFiles`, so part of that ~4%
   is not the backend — one more reason not to rank them off this table.
 - **Query latency is flat across every variant** (27.96 → 26.5–27.9 ms). That
-  is the expected result given that ~90% of a query is the engine — see
+  is the expected result given that ~90% of a query is above postgres — see
   "Where the time actually goes" below. No client-side change moves it.
 - **The two runtime flags look like noise here because this workload does not
   exercise them.** `PRISMA_PY_SHARED_ENGINE` pays off when both clients are
@@ -371,7 +371,7 @@ client-side work at each end of it.
   use it without giving up the model layer.
 - **If query latency is the binding constraint, the out-of-process design is
   the thing to replace, not the client's deserializer.** A driver-level stack
-  (SQLAlchemy/psycopg) removes the ~90% rather than optimizing the ~10% —
+  (SQLAlchemy/psycopg) removes most of the ~90% rather than optimizing the ~10% —
   which is the trade
   [`docs/migrating-to-sqlalchemy.md`](../../docs/migrating-to-sqlalchemy.md)
   lays out. Prisma's value is the schema/typing/migration workflow; this is

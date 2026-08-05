@@ -64,12 +64,23 @@ three levels (`where_time_goes.py`):
 | attribution | 1 row | 400 rows |
 | --- | ---: | ---: |
 | postgres itself (psycopg) | 0.17 ms (**9%**) | 0.90 ms (**12%**) |
-| engine transport + execution | 1.23 ms (63%) | 3.18 ms (42%) |
-| GraphQL planning + serialization | 0.55 ms (28%) | 3.48 ms (46%) |
+| client + engine, same SQL | 1.23 ms (63%) | 3.18 ms (42%) |
+| structured query on top of that | 0.55 ms (28%) | 3.48 ms (46%) |
 | **total (full ORM path)** | 1.96 ms | 7.56 ms |
 
-**The database is ~10% of a Prisma query. The query engine is ~90%.** The same
+**Postgres is ~10% of a Prisma query. Everything above it is ~90%.** The same
 query is 8–12× slower through Prisma than through psycopg.
+
+Read the middle two rows carefully, because the obvious reading is wrong. This
+benchmark cannot separate the engine process from the client wrapped around it:
+the raw-SQL level goes through `query_raw`, which returns plain rows, while the
+structured level returns model instances. So row two is the subprocess hop, the
+HTTP round trip, request handling *and* whatever decoding `query_raw` does — not
+engine transport alone — and row three adds GraphQL planning and serialization
+*and* record construction, which psycopg never does. What the table supports is
+that the overhead is above postgres and below the application. Attributing it
+to the engine specifically needs a measurement that isolates the engine
+process, which this is not.
 
 Ruled out as explanations — all measured, all working correctly:
 
@@ -79,9 +90,11 @@ Ruled out as explanations — all measured, all working correctly:
 - concurrency serialization (throughput *improves* under load: 2.5 ms/query
   sequential → ~1.6 ms at 80+ concurrent)
 
-The overhead is intrinsic to the binary query engine: a subprocess hop plus
-GraphQL parse/plan/serialize per call. **No Python-side change can move it** —
-eliminating *all* client deserialization would still leave ~88% untouched.
+The overhead is intrinsic to running queries through a separate engine process:
+a subprocess hop plus GraphQL parse/plan/serialize per call. **No Python-side
+change can move most of it** — eliminating *all* client deserialization would
+still leave ~88% untouched, which is the measurement that matters here and is
+independent of how the remainder splits between the engine and the client.
 
 ---
 
@@ -121,9 +134,12 @@ nothing is not fast, it is meaningless.
 
 Three things worth reading off this table:
 
-- **`query_raw` is the cleanest measurement here.** The SQL is byte-identical on
-  both sides and there is no GraphQL planning to do, so the entire 0.77 ms
-  difference is engine transport: the subprocess hop and HTTP round-trip.
+- **`query_raw` is the cleanest measurement here**, though not as clean as it
+  first looks. The SQL is byte-identical on both sides and there is no GraphQL
+  planning to do, which removes the largest confound. What remains in the
+  0.77 ms is the whole Prisma stack above postgres — subprocess hop, HTTP round
+  trip, request handling and decoding — measured against SQLAlchemy over psycopg
+  returning mappings. It is an end-to-end difference, not a transport number.
 - **Includes recover the least (45%), and even that is generous.** A to-many
   include is where the engine does real work, and where a translation is most
   likely to lose ground rather than gain it. The 45% was measured before the
