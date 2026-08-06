@@ -215,6 +215,11 @@ class QueryBuilder:
         if name not in self.prisma_models:
             raise UnknownModelError(name)
 
+        if getattr(model, '__prisma_slim__', False):
+            from ._slimmodel import scalar_field_names
+
+            return scalar_field_names(model)
+
         # by default we exclude every field that points to a PrismaModel as that indicates that it is a relational field
         # we explicitly keep fields that point to anything else, even other pydantic.BaseModel types, as they can be used to deserialize JSON
         return [
@@ -242,6 +247,11 @@ class QueryBuilder:
 
         if field not in mappings:
             raise UnknownRelationalFieldError(model=current_model.__name__, field=field)
+
+        if getattr(current_model, '__prisma_slim__', False):
+            from ._slimmodel import related_model
+
+            return cast('type[PrismaModel]', related_model(current_model, field))
 
         try:
             info = model_fields(current_model)[field]
@@ -321,6 +331,11 @@ def _field_is_prisma_model(field: FieldInfo, *, name: str, parent: type[BaseMode
 
 def _is_prisma_model_type(type_: type[BaseModel]) -> TypeGuard[type[PrismaModel]]:
     from .bases import _PrismaModel  # noqa: TID251
+
+    # slim-backend records (modelBackend = "slim") are not pydantic models but
+    # carry the same __prisma_model__ contract the query builder relies on
+    if getattr(type_, '__prisma_slim__', False):
+        return True
 
     return issubclass(type_, _PrismaModel)
 

@@ -3,6 +3,25 @@
 -r deps/pytest.txt
 -r deps/pytest-mock.txt
 -r deps/syrupy.txt
+# `prisma.sa` is optional at runtime, but tests/test_sqlalchemy `importorskip`s it —
+# without this the whole SQLAlchemy suite silently skips in CI
+-r deps/sqlalchemy.txt
+# the driver behind `postgresql+psycopg://`, which the tests that execute against
+# a real database use; without it they error at fixture setup rather than skip
+-r deps/psycopg.txt
+# `modelBackend = "msgspec"` is an optional runtime extra, but
+# tests/test_generation/test_partial_types_msgspec.py generates a client that
+# uses it — without this the generation fails instead of running
+-r deps/msgspec.txt
+# the declarative/alembic emitters assert that the source they generate passes
+# `ruff` and `mypy --strict` — users paste that source into their own projects,
+# so the guarantee has to hold in CI and not only on a maintainer's machine
+-r deps/ruff.txt
+-r deps/mypy.txt
+# `prisma.sa` renders the Alembic files as text and never imports alembic, but
+# the tests apply the baseline to a real database and type check the emitted
+# `env.py`, which imports it
+-r deps/alembic.txt
 pytest-sugar
 mock==5.1.0
 pytest-subprocess==1.5.2

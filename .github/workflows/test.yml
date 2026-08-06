@@ -82,6 +82,74 @@ jobs:
           path: ".cache/.coverage.*"
           include-hidden-files: true
 
+  sqlalchemy:
+    # The SQLAlchemy suite has two halves: translations that can be proven by
+    # comparing compiled SQL, which run anywhere, and translations that can only
+    # be proven by executing them, which need a real PostgreSQL. The `test`
+    # matrix cannot host a service container because half of it is Windows, so
+    # the executing half lives here. Without this job those tests skip, and
+    # `report-strict` fails on them for never having run.
+    name: sqlalchemy (live postgres)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: prisma
+          POSTGRES_PASSWORD: prisma
+          POSTGRES_DB: prisma
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U prisma -d prisma"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install . -r pipelines/requirements/ci.txt
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pipelines/requirements/*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Setup database
+        run: |
+          python -m prisma db push --schema=tests/data/schema.prisma --skip-generate
+          cp tests/data/dev.db dev.db
+
+      - name: Setup coverage
+        run: |
+          nox -s setup
+
+      - name: Run tests
+        run: |
+          python scripts/ci.py -s test --no-error-on-missing-interpreters -- tests/test_sqlalchemy
+        env:
+          TARGET_PYTHON: "3.11"
+          PRISMA_SA_TEST_DATABASE_URL: postgresql://prisma:prisma@127.0.0.1:5432/prisma
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-data-sqlalchemy
+          path: ".cache/.coverage.*"
+          include-hidden-files: true
+
   integration:
     name: integration (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -363,7 +431,7 @@ jobs:
   coverage:
     name: coverage
     runs-on: ubuntu-latest
-    needs: [databases, test]
+    needs: [databases, test, sqlalchemy]
     steps:
       - uses: actions/checkout@v4
 
@@ -468,6 +536,7 @@ jobs:
       - lint
       - mypy
       - databases
+      - sqlalchemy
       - coverage
       - docker
 

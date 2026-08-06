@@ -1,6 +1,7 @@
 import os
 import sys
 import enum
+import pprint
 import textwrap
 import importlib
 from typing import (
@@ -13,6 +14,7 @@ from typing import (
     Tuple,
     Union,
     Generic,
+    Mapping,
     TypeVar,
     ClassVar,
     Iterable,
@@ -55,6 +57,13 @@ from .._compat import (
 )
 from .._constants import QUERY_BUILDER_ALIASES
 from ._dsl_parser import parse_schema_dsl
+from ._native_types import (
+    NativeType,
+    parse_native_types,
+    parse_relation_maps,
+    parse_relation_mode,
+    parse_relation_on_update,
+)
 
 __all__ = (
     'AnyData',
@@ -162,6 +171,278 @@ def raise_err(msg: str) -> NoReturn:
     raise TemplateError(msg)
 
 
+#: PostgreSQL's `NAMEDATALEN - 1`. MySQL allows 64, SQL Server 128; this is the
+#: tightest of the relational providers and the one Prisma truncates against.
+MAX_IDENTIFIER_LENGTH = 63
+
+
+def truncate_identifier(base: str, suffix: str, limit: int = MAX_IDENTIFIER_LENGTH) -> str:
+    """Prisma's rule for a derived constraint name that is too long.
+
+    The suffix (`_key`, `_idx`, `_fkey`) is what makes the name recognisable, so
+    it is kept and the base is cut to fit. Verified against `prisma db push`:
+
+        document_requirements_on_documents_documentId_documentRequirementId_journeyId_key  (81)
+        -> document_requirements_on_documents_documentId_documentRequi_key                 (63)
+
+    Emitting the untruncated name does not merely diverge from Prisma —
+    SQLAlchemy raises `IdentifierError` before any SQL is sent, so it fails the
+    Alembic step outright.
+    """
+    name = f'{base}{suffix}'
+    if len(name) <= limit:
+        return name
+    return base[: limit - len(suffix)] + suffix
+
+
+def _index_field_modifiers(field: 'IndexField') -> Dict[str, Any]:
+    """One index member's per-column modifiers, as `@@index`/`@@unique` take them.
+
+    Shared by both so the two can never report a different shape for the same
+    wire object: a `sort:`/`length:`/`ops:` honoured on an index and dropped on a
+    unique is a database that differs from the one Prisma builds.
+    """
+    return {
+        'name': field.name,
+        'sort_order': field.sort_order,
+        'length': field.length,
+        'operator_class': field.operator_class,
+    }
+
+
+def _native_type_for(field: 'Field', model_natives: Dict[str, NativeType]) -> Optional[List[Any]]:
+    native = field.native_type or model_natives.get(field.name)
+    if native is None:
+        return None
+    return [native[0], list(native[1])]
+
+
+def _sequence_for(model: 'Model', field: 'Field') -> Optional[str]:
+    """The sequence backing `@default(autoincrement())`, when it needs naming.
+
+    A primary key gets `SERIAL`, which SQLAlchemy emits from `autoincrement=True`
+    and which creates the sequence implicitly. A **non-primary-key** column does
+    not: SQLAlchemy emits a plain `integer`, the sequence is never created, and
+    because Prisma still marks the column `NOT NULL` every INSERT into that table
+    fails.
+
+    Nothing reports this. Alembic's `compare_server_default` is off by default,
+    so autogenerate produces an empty diff and the migration passes its own gate
+    while leaving a database that rejects writes. Naming the sequence here is
+    what lets the builder emit it.
+
+    Verified against `prisma db push`: the name is `<table>_<column>_seq`, and it
+    is `OWNED BY` the column.
+    """
+    default = field.default_spec
+    if not default or default.get('kind') != 'generator' or default.get('name') != 'autoincrement':
+        return None
+
+    if field.name in model.primary_key_fields:
+        return None
+
+    return truncate_identifier('_'.join([model.table_name, field.column_name]), '_seq')
+
+
+def build_schema_metadata(datamodel: 'Datamodel', schema_text: Optional[str] = None) -> Dict[str, Any]:
+    """Reconstruct the physical database schema from the DMMF.
+
+    The generated client has never needed this: it hands a GraphQL-ish document
+    to the query engine, and the engine knows the tables. Anything that builds
+    SQL itself — a SQLAlchemy backend, a migration tool, a schema differ — needs
+    table names, column names, constraints and resolved foreign keys, none of
+    which the client currently carries.
+
+    Returned as plain dicts on purpose. It is emitted into generated code as a
+    literal, so it must round-trip through `repr()`, and a literal costs one
+    dict construction at import rather than N object instantiations.
+
+    `schema_text` is the raw `schema.prisma` contents, needed only for `@db.*`
+    native types, which Prisma does not put on the wire. Callers that have it
+    should pass it; without it every `@db.Uuid` silently reads as `text`.
+    """
+    schema: Dict[str, Any] = {}
+    native_types = parse_native_types(schema_text) if schema_text else {}
+    relation_maps = parse_relation_maps(schema_text) if schema_text else {}
+    relation_on_update = parse_relation_on_update(schema_text) if schema_text else {}
+    # A datasource setting, so one value for every relation in the schema. It is
+    # reported *on* each relation rather than beside them because it is what
+    # decides whether that relation has a foreign key constraint at all, and a
+    # consumer building DDL is already reading `on_delete`/`on_update`/`fk_name`
+    # off the same dict.
+    relation_mode = parse_relation_mode(schema_text) if schema_text else None
+
+    for model in datamodel.models:
+        model_natives = native_types.get(model.name, {})
+        model_relation_maps = relation_maps.get(model.name, {})
+        fields: Dict[str, Any] = {}
+        relations: Dict[str, Any] = {}
+
+        for field in model.all_fields:
+            if field.is_relational:
+                meta = model.relation_metadata(field)
+                # The foreign key constraint name. `@relation(map:)` wins; Prisma
+                # does not send it in the DMMF, so it comes from the lexer. The
+                # derived fallback must be truncated: PostgreSQL caps identifiers
+                # at 63 and SQLAlchemy raises `IdentifierError` before emitting
+                # any SQL, which fails the migration outright.
+                if meta['owner']:
+                    meta['fk_name'] = model_relation_maps.get(field.name) or truncate_identifier(
+                        '_'.join([model.table_name, *meta['fk_columns']]), '_fkey'
+                    )
+                else:
+                    meta['fk_name'] = None
+
+                # `onUpdate:` is absent from the DMMF like `map:` is, so it comes
+                # from the lexer too. It is declared on the *owning* field, and
+                # both sides describe the same constraint, so the inverse side
+                # reads it off the owner exactly as `on_delete` does.
+                owning_field = field.name if meta['owner'] else meta['back_field']
+                if meta['fk_model'] is not None and owning_field is not None:
+                    meta['on_update'] = relation_on_update.get(meta['fk_model'], {}).get(owning_field)
+
+                meta['relation_mode'] = relation_mode
+
+                relations[field.name] = meta
+                continue
+
+            fields[field.name] = {
+                'column': field.column_name,
+                'kind': field.kind,
+                'type': field.type,
+                'is_list': field.is_list,
+                'nullable': not field.is_required,
+                'is_id': field.is_id,
+                'is_unique': field.is_unique,
+                'is_read_only': field.is_read_only,
+                'is_updated_at': field.is_updated_at,
+                'default': field.default_spec,
+                # Prisma does not send `@db.*` on the wire (verified), so this
+                # falls back to lexing the raw schema text. `Field.native_type`
+                # is checked first so a future Prisma release that does send it
+                # takes precedence automatically.
+                'native_type': _native_type_for(field, model_natives),
+                'sequence': _sequence_for(model, field),
+            }
+
+        indexes = []
+        for index in datamodel.indexes_for(model.name):
+            # `@@id` and `@@unique` also show up here; they are reported
+            # separately as constraints, and emitting them twice would make a
+            # migration tool create a redundant index alongside each one.
+            if index.type in {'id', 'unique'}:
+                continue
+            columns = [model.resolve_field(f.name).column_name for f in index.fields]
+            indexes.append(
+                {
+                    # An unnamed `@@index` still has a name in the database —
+                    # Prisma's default. Resolving it here means a schema differ
+                    # compares real names instead of reporting every index as
+                    # both dropped and added.
+                    'name': index.db_name
+                    or index.name
+                    or truncate_identifier('_'.join([model.table_name, *columns]), '_idx'),
+                    'is_named': index.db_name is not None or index.name is not None,
+                    'type': index.type,
+                    'algorithm': index.algorithm,
+                    'clustered': index.clustered,
+                    'columns': columns,
+                    'fields': [_index_field_modifiers(f) for f in index.fields],
+                }
+            )
+
+        # Driven off `datamodel.indexes` rather than `uniqueIndexes`, because
+        # that is the only place a *field-level* `@unique` shows up — Prisma
+        # reports those solely as `Field.isUnique`, and a client reading
+        # `uniqueIndexes` alone silently loses every single-column unique in the
+        # schema.
+        uniques = []
+        for index in datamodel.indexes_for(model.name):
+            if index.type != 'unique':
+                continue
+
+            unique_fields = [f.name for f in index.fields]
+            columns = [model.resolve_field(name).column_name for name in unique_fields]
+            # The Prisma-level identifier, i.e. the key in `where={...}`. A
+            # compound unique gets it from `uniqueIndexes`; a field-level one is
+            # addressed by the field name itself.
+            # compared in order: `@@unique([a, b])` and `@@unique([b, a])` are two
+            # different constraints with two different `where` keys, and matching
+            # on the unordered set can hand back the other one's identifier
+            matching = [unique.name for unique in model.unique_indexes if list(unique.fields) == unique_fields]
+            prisma_name = matching[0] if matching else None
+            uniques.append(
+                {
+                    # `name` and `db_name` are unrelated namespaces and both are
+                    # needed: one addresses the constraint in a query, the other
+                    # names it in the database.
+                    'name': prisma_name or '_'.join(unique_fields),
+                    'db_name': index.db_name or truncate_identifier('_'.join([model.table_name, *columns]), '_key'),
+                    'fields': unique_fields,
+                    'columns': columns,
+                    # `@@unique` takes the same per-column modifiers `@@index`
+                    # does, and Prisma honours them: `@@unique([a, b(sort:
+                    # Desc)])` is `CREATE UNIQUE INDEX ... (a, b DESC)`, and so
+                    # is a field-level `@unique(sort: Desc)`. Reported under
+                    # their own key because `fields` here is the *Prisma* field
+                    # names — the `where={...}` identifier — not index members.
+                    'field_modifiers': [_index_field_modifiers(f) for f in index.fields],
+                    'is_defined_on_field': index.is_defined_on_field,
+                }
+            )
+
+        primary_key = model.primary_key_fields
+        # `@@id(map: "...")`. Left as None when unmapped: unlike unique and
+        # index names, Prisma's default primary key constraint name is
+        # provider-specific (`<table>_pkey` on PostgreSQL, `PRIMARY` on MySQL),
+        # so deriving one here would bake in the wrong answer for some users.
+        primary_key_db_name = next(
+            (index.db_name for index in datamodel.indexes_for(model.name) if index.type == 'id'),
+            None,
+        )
+        schema[model.name] = {
+            'table': model.table_name,
+            'primary_key': {
+                'name': (model.compound_primary_key.name if model.compound_primary_key is not None else None),
+                'db_name': primary_key_db_name,
+                'fields': primary_key,
+                'columns': [model.resolve_field(name).column_name for name in primary_key],
+            },
+            'fields': fields,
+            'relations': relations,
+            'uniques': uniques,
+            'indexes': indexes,
+        }
+
+    return schema
+
+
+def build_enum_metadata(datamodel: 'Datamodel') -> Dict[str, Any]:
+    """Enum names and value names as the *database* spells them.
+
+    `@map` on an enum value means the Python name and the stored label differ;
+    without this a SQL client writes the Python name and the insert fails.
+    """
+    return {
+        enum.name: {
+            'db_name': enum.db_name or enum.name,
+            'values': {value.name: value.db_name or value.name for value in enum.values},
+        }
+        for enum in datamodel.enums
+    }
+
+
+def as_literal(value: object, indent: int = 4) -> str:
+    """Render a JSON-ish Python object as an indented source literal.
+
+    Emitted as a literal rather than as constructor calls so that importing the
+    generated module costs one dict construction, not N object instantiations —
+    the same reason `metadata.py` has always been literals.
+    """
+    formatted = pprint.pformat(value, indent=1, width=110 - indent, sort_dicts=False)
+    return textwrap.indent(formatted, ' ' * indent)
+
+
 def type_as_string(typ: str) -> str:
     """Ensure a type string is wrapped with a string, e.g.
 
@@ -198,6 +479,37 @@ def format_documentation(doc: str, indent: int = 4) -> str:
             prefix,
         ]
     )
+
+
+def partial_slim_spec(from_model: str, field: Mapping[str, Any]) -> str:
+    """Conversion spec literal for a partial model field (`modelBackend = "msgspec"`).
+
+    The spec is derived from the field on the source model so that scalar tags
+    stay exact — the python type string a `PartialModelField` carries cannot
+    distinguish e.g. `Int` from `BigInt`, both of which render as `_int`. The
+    partial's own metadata then takes over for optionality and for relations
+    that `create_partial(relations=...)` retargeted at another partial type.
+    """
+    models = [model for model in get_datamodel().models if model.name == from_model]
+    assert len(models) == 1, f'Could not find the {from_model} model'
+
+    infos = {info.name: info for info in models[0].all_fields}
+    name = field['name']
+    assert name in infos, f'Could not find the {from_model}.{name} field'
+
+    spec = infos[name].slim_base_spec()
+    if field['is_relational']:
+        # a retargeted relation is rendered as `'partials.Foo'` or
+        # `List['partials.Foo']`; an untouched one as `models.Foo` /
+        # `List['models.Foo']`. Either way the type name is the trailing
+        # dotted segment, stripped of the quoting the renderer adds.
+        spec = ('model', field['type'].rsplit('.', 1)[-1].rstrip("']"))
+
+    if field['is_list']:
+        spec = ('list', spec)
+    if field['optional']:
+        spec = ('opt', spec)
+    return repr(spec)
 
 
 def max_relation_chain_depth(models: List['Model']) -> int:
@@ -417,6 +729,10 @@ class GenericData(GenericModel, Generic[ConfigT]):
             clean_multiline,
             format_documentation,
             model_dict,
+            as_literal,
+            partial_slim_spec,
+            build_schema_metadata,
+            build_enum_metadata,
         ]:
             params[func.__name__] = func
 
@@ -492,6 +808,9 @@ class Datasource(BaseModel):
     provider: str
     active_provider: str = FieldInfo(alias='activeProvider')
     url: 'OptionalValueFromEnvVar'
+
+    # `schemas = [...]` from the multiSchema preview feature
+    schemas: List[str] = FieldInfo(default_factory=list)
 
     source_file_path: Optional[Path] = FieldInfo(alias='sourceFilePath')
 
@@ -587,6 +906,42 @@ class Config(BaseSettings):
             'crashing on import. Requires Pydantic v2.'
         ),
     )
+    lazy_actions: bool = FieldInfo(
+        default=False,
+        env='PRISMA_PY_CONFIG_LAZY_ACTIONS',
+        alias='lazyActions',
+        description=(
+            'Create per-model action namespaces (client.user, client.post, ...) on first '
+            'attribute access instead of eagerly in Prisma.__init__, and defer importing '
+            'the actions module until first database access. Client construction and '
+            'import become O(models touched) instead of O(models in schema).'
+        ),
+    )
+    schema_metadata: bool = FieldInfo(
+        default=False,
+        env='PRISMA_PY_CONFIG_SCHEMA_METADATA',
+        alias='schemaMetadata',
+        description=(
+            'Emit the physical database schema (tables, columns, primary keys, unique '
+            'constraints, indexes, enum value mappings and fully resolved foreign keys) '
+            'into the generated metadata module. The binary query engine derives all of '
+            'this itself, so it is dead weight there; a client that speaks SQL directly '
+            'cannot build a single query without it.'
+        ),
+    )
+    model_backend: str = FieldInfo(
+        default='pydantic',
+        env='PRISMA_PY_CONFIG_MODEL_BACKEND',
+        alias='modelBackend',
+        description=(
+            'Record model backend. "pydantic" (default) generates the usual pydantic '
+            'BaseModel records. "slim" generates pydantic-free __slots__ records with '
+            'compiled converters (requires separateModelFiles). "msgspec" generates '
+            'msgspec.Struct records decoded in C — the fastest backend (requires the '
+            'msgspec package, incompatible with separateModelFiles). Both alternatives '
+            'convert trusted engine data rather than validating arbitrary input.'
+        ),
+    )
 
     # this seems to be the only good method for setting the contextvar as
     # we don't control the actual construction of the object like we do for
@@ -604,6 +959,14 @@ class Config(BaseSettings):
             extra='forbid',
             use_enum_values=True,
             populate_by_name=True,
+            # `modelBackend` is a generator option, not a pydantic model
+            # attribute, but its `model_` prefix collides with pydantic's
+            # reserved namespace. Pydantic 2.8 warns unconditionally; 2.10+ only
+            # warns on a genuine collision, so this reproduces on the pinned CI
+            # version and not on a newer local one. The schema used by the tests
+            # generates with `python -W error`, deliberately, so the warning is
+            # an error and every generate — and therefore every test job — fails.
+            protected_namespaces=(),
         )
     else:
         if not TYPE_CHECKING:
@@ -675,6 +1038,32 @@ class Config(BaseSettings):
         if recursive_validation_models is not None:
             values['recursive_validation_models'] = recursive_validation_models
             values.pop('recursiveValidationModels', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_lazy_actions(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        lazy_actions = values.get('lazyActions')
+        if lazy_actions is not None:
+            values['lazy_actions'] = lazy_actions
+            values.pop('lazyActions', None)
+
+        return values
+
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def transform_model_backend(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle camelCase from schema
+        model_backend = values.get('modelBackend')
+        if model_backend is not None:
+            values['model_backend'] = model_backend
+            values.pop('modelBackend', None)
+
+        backend = values.get('model_backend')
+        if backend is not None and backend not in ('pydantic', 'slim', 'msgspec'):
+            raise ValueError(f'modelBackend must be "pydantic", "slim" or "msgspec", got: {backend!r}')
 
         return values
 
@@ -773,12 +1162,49 @@ class DMMF(BaseModel):
     prisma_schema: PrismaSchema = FieldInfo(alias='schema')
 
 
+class IndexField(BaseModel):
+    """One column within an index, with its per-column modifiers."""
+
+    name: str
+    sort_order: Optional[str] = FieldInfo(alias='sortOrder', default=None)
+    length: Optional[int] = None
+    operator_class: Optional[str] = FieldInfo(alias='operatorClass', default=None)
+
+
+class Index(BaseModel):
+    """An entry from `datamodel.indexes`.
+
+    This is the *only* place Prisma reports `@@index`, index `map:`/`sort:`/
+    `length:`/`type:` modifiers, and the resolved database-level name of a
+    unique or primary key constraint. It is sent on the wire for every schema;
+    it was previously discarded.
+    """
+
+    model: str
+    # 'id' | 'unique' | 'normal' | 'fulltext'
+    type: str
+    is_defined_on_field: bool = FieldInfo(alias='isDefinedOnField')
+    name: Optional[str] = None
+    db_name: Optional[str] = FieldInfo(alias='dbName', default=None)
+    algorithm: Optional[str] = None
+    clustered: Optional[bool] = None
+    fields: List['IndexField'] = FieldInfo(default_factory=list)
+
+
 class Datamodel(BaseModel):
     enums: List['Enum']
     models: List['Model']
 
+    # `@@index` / `@@fulltext` / resolved constraint names live here and nowhere
+    # else in the DMMF
+    indexes: List['Index'] = FieldInfo(default_factory=list)
+
     # not implemented yet
     types: List[object]
+
+    def indexes_for(self, model: str) -> List['Index']:
+        """`@@index`/`@@unique`/`@@id` entries declared on the given model."""
+        return [index for index in self.indexes if index.model == model]
 
     @field_validator('types')
     @classmethod
@@ -824,6 +1250,9 @@ class Model(BaseModel):
     is_generated: bool = FieldInfo(alias='isGenerated')
     compound_primary_key: Optional['PrimaryKey'] = FieldInfo(alias='primaryKey')
     unique_indexes: List['UniqueIndex'] = FieldInfo(alias='uniqueIndexes')
+    # the legacy `List[List[str]]` form of the same information; it is the only
+    # place field *order* within a compound unique is guaranteed
+    unique_fields: List[List[str]] = FieldInfo(alias='uniqueFields', default_factory=list)
     all_fields: List['Field'] = FieldInfo(alias='fields')
 
     # stores the parsed DSL, not an actual field defined by prisma
@@ -946,6 +1375,181 @@ class Model(BaseModel):
     def sampler(self) -> Sampler:
         return self._sampler
 
+    # -- physical schema derivation ------------------------------------------
+    #
+    # Everything below reconstructs the *database* shape of the model from the
+    # DMMF. The binary query engine has always done this for us, so none of it
+    # was needed before; a client that talks SQL directly needs all of it.
+
+    @property
+    def table_name(self) -> str:
+        """The physical table name, honouring `@@map`."""
+        return self.db_name or self.name
+
+    @cached_property
+    def primary_key_fields(self) -> List[str]:
+        """Field names forming the primary key, in declaration order.
+
+        Empty for the (legal, if unusual) model that has no `@id`/`@@id` and is
+        identified only by a unique constraint.
+        """
+        if self.compound_primary_key is not None:
+            return list(self.compound_primary_key.fields)
+
+        for field in self.all_fields:
+            if field.is_id:
+                return [field.name]
+
+        return []
+
+    def get_related_field(self, field: 'Field') -> Optional['Field']:
+        """The field on the other side of `field`'s relation.
+
+        Both sides of a Prisma relation carry the same `relationName`, which is
+        what makes this resolvable. For a self-relation both sides live on this
+        same model, so identity — not name — is what excludes `field` itself.
+        """
+        related = field.get_relational_model()
+        if related is None:
+            return None
+
+        for candidate in related.all_fields:
+            if candidate.relation_name != field.relation_name:
+                continue
+            if candidate is field:
+                continue
+            return candidate
+
+        return None
+
+    def relation_metadata(self, field: 'Field') -> Dict[str, Any]:
+        """Everything a SQL compiler needs to join, filter or write `field`.
+
+        The shapes, named to match `docs/sqlalchemy-refactor/`:
+
+        - `to-one-owner`   this model holds the foreign key
+        - `to-one-inverse` the *other* model holds the foreign key
+        - `to-many`        the other model holds the foreign key, many rows
+        - `many-to-many`   an implicit join table Prisma manages invisibly
+
+        The distinction that actually bites is `fk_required`: when the foreign
+        key columns are `NOT NULL` there is no way to express `disconnect` or a
+        `set` that drops rows, and the engine answers those with P2014. Getting
+        this wrong produces a client that silently orphans rows instead of
+        raising, which is why it is derived here rather than guessed later.
+        """
+        related_model = field.get_relational_model()
+        assert related_model is not None, f'{self.name}.{field.name} is not relational'
+
+        back = self.get_related_field(field)
+
+        # Prisma reports the foreign key on the owning side only; the inverse
+        # side gets empty lists. Exactly one side of a to-one/to-many relation
+        # owns it, and neither side owns an implicit m2m.
+        owner = bool(field.relation_from_fields)
+
+        if owner:
+            fk_model, fk_field = self, field
+        elif back is not None and back.relation_from_fields:
+            fk_model, fk_field = related_model, back
+        else:
+            fk_model, fk_field = None, None
+
+        if field.is_list and back is not None and back.is_list:
+            shape = 'many-to-many'
+        elif field.is_list:
+            shape = 'to-many'
+        elif owner:
+            shape = 'to-one-owner'
+        else:
+            shape = 'to-one-inverse'
+
+        fk_fields: List[str] = []
+        fk_columns: List[str] = []
+        referenced_fields: List[str] = []
+        referenced_columns: List[str] = []
+        fk_required = False
+
+        if fk_model is not None and fk_field is not None:
+            fk_fields = list(fk_field.relation_from_fields or [])
+            referenced_fields = list(fk_field.relation_to_fields or [])
+
+            resolved = [fk_model.resolve_field(name) for name in fk_fields]
+            fk_columns = [f.column_name for f in resolved]
+            # A relation is mandatory only if *every* foreign key column is
+            # NOT NULL; a partially-optional compound FK can still be nulled.
+            fk_required = bool(resolved) and all(f.is_required for f in resolved)
+
+            target = fk_field.get_relational_model()
+            assert target is not None
+            referenced_columns = [target.resolve_field(name).column_name for name in referenced_fields]
+
+        meta: Dict[str, Any] = {
+            'to': related_model.name,
+            'shape': shape,
+            'relation_name': field.relation_name,
+            'is_list': field.is_list,
+            'nullable': not field.is_required,
+            'owner': owner,
+            'back_field': back.name if back is not None else None,
+            'fk_model': fk_model.name if fk_model is not None else None,
+            'fk_fields': fk_fields,
+            'fk_columns': fk_columns,
+            'referenced_fields': referenced_fields,
+            'referenced_columns': referenced_columns,
+            'fk_required': fk_required,
+            # None means "Prisma's default for this arity" — not "no action".
+            'on_delete': (fk_field.relation_on_delete if fk_field is not None else None),
+            # Same convention, but Prisma sends no `relationOnUpdate` key at all
+            # (verified), so the DMMF cannot answer this. `build_schema_metadata`
+            # fills it in from the lexed schema text; None stays "Prisma's
+            # default", which for `onUpdate` is Cascade at every arity.
+            'on_update': None,
+            # The datasource's `relationMode`, filled in by
+            # `build_schema_metadata` from the lexed schema text for the same
+            # reason: Prisma sends no relation-mode key either. None stays
+            # "Prisma's default", which is `foreignKeys`.
+            'relation_mode': None,
+            # Always present, including on the relations where it is trivially
+            # False. The runbook tells callers to check this before traversing a
+            # relation, and a key that exists on only 2 of 640 relations makes
+            # that instruction a KeyError.
+            'join_ambiguous': False,
+        }
+
+        if shape == 'many-to-many':
+            meta.update(self._implicit_join_metadata(field, related_model))
+
+        return meta
+
+    def _implicit_join_metadata(self, field: 'Field', related_model: 'Model') -> Dict[str, Any]:
+        """Locate the join table Prisma creates for an implicit m2m relation.
+
+        The table is `_<relationName>` with columns `A` and `B`, where `A`
+        belongs to whichever model sorts first by name. For a self-relation both
+        sides sort equally and the assignment depends on declaration order in a
+        way the DMMF does not expose — so we refuse to guess and say so, rather
+        than emitting a coin-flip a compiler would silently trust.
+        """
+        assert field.relation_name is not None
+        table = f'_{field.relation_name}'
+
+        if related_model.name == self.name:
+            return {
+                'join_table': table,
+                'join_self_column': None,
+                'join_other_column': None,
+                'join_ambiguous': True,
+            }
+
+        self_first = self.name < related_model.name
+        return {
+            'join_table': table,
+            'join_self_column': 'A' if self_first else 'B',
+            'join_other_column': 'B' if self_first else 'A',
+            'join_ambiguous': False,
+        }
+
 
 class Constraint(BaseModel):
     name: str
@@ -977,6 +1581,21 @@ class Field(BaseModel):
     # TODO: switch to enums
     kind: str
     type: str
+
+    # `@map("col")` — the physical column name. Prisma omits this key entirely
+    # when the field is not mapped, hence Optional with a None default.
+    db_name: Optional[str] = FieldInfo(alias='dbName', default=None)
+
+    # `@db.VarChar(255)` -> ('VarChar', ['255']).
+    #
+    # NOTE: verified empirically that Prisma does *not* send this on the wire for
+    # the current generator protocol — there are zero `nativeType` keys in a real
+    # payload even for a schema using `@db.VarChar`/`@db.Decimal`. It is only
+    # recoverable by lexing the raw schema text, which `GenericData.datamodel`
+    # does carry. The field is modelled here so that a future Prisma release
+    # sending it is picked up automatically (and so the completeness test would
+    # notice), but consumers must not assume it is populated.
+    native_type: Optional[Tuple[str, List[str]]] = FieldInfo(alias='nativeType', default=None)
 
     is_id: bool = FieldInfo(alias='isId')
     is_list: bool = FieldInfo(alias='isList')
@@ -1066,6 +1685,43 @@ class Field(BaseModel):
         if self.is_list:
             return f'List[{type_}]'
         return type_
+
+    _SLIM_SCALAR_TAGS: ClassVar[Dict[str, str]] = {
+        'String': 'str',
+        'Int': 'int',
+        'BigInt': 'bigint',
+        'Float': 'float',
+        'Boolean': 'bool',
+        'DateTime': 'datetime',
+        'Json': 'json',
+        'Bytes': 'base64',
+        'Decimal': 'decimal',
+    }
+
+    def slim_spec_value(self) -> object:
+        """Conversion spec for the slim model backend.
+
+        Nested tuples consumed by `prisma._fastparse.converter_for_spec`,
+        e.g. `('opt', ('list', ('model', 'Post')))`.
+        """
+        spec = self.slim_base_spec()
+        if self.is_list:
+            spec = ('list', spec)
+        if not self.is_required or self.relation_name is not None:
+            spec = ('opt', spec)
+        return spec
+
+    def slim_base_spec(self) -> object:
+        """The spec for this field with no `opt` / `list` wrappers applied."""
+        if self.kind == 'object':
+            return ('model', self.type)
+        if self.kind == 'enum':
+            return 'enum'
+        return self._SLIM_SCALAR_TAGS[self.type]
+
+    def slim_spec(self) -> str:
+        """`slim_spec_value()` rendered as a literal for the templates."""
+        return repr(self.slim_spec_value())
 
     @property
     def python_type_as_string(self) -> str:
@@ -1157,6 +1813,42 @@ class Field(BaseModel):
     @property
     def is_relational(self) -> bool:
         return self.relation_name is not None
+
+    @property
+    def column_name(self) -> str:
+        """The physical column name, honouring `@map`."""
+        return self.db_name or self.name
+
+    @property
+    def default_spec(self) -> Optional[Dict[str, Any]]:
+        """The default, split into the two cases a SQL compiler must treat
+        differently.
+
+        A *generator* (`cuid()`, `uuid()`, `now()`, `autoincrement()`, ...) has
+        to be evaluated per-row, either client-side or by the database. A
+        *literal* is a constant that can be inlined. Prisma sends the first as
+        an object and the second as a bare JSON value, which is easy to conflate
+        — a `String` field defaulting to the literal `"uuid"` is not a uuid
+        generator.
+        """
+        if not self.has_default_value:
+            return None
+
+        default = self.default
+        if isinstance(default, DefaultValue):
+            args = default.args
+            return {
+                'kind': 'generator',
+                # Prisma normalises `@default(uuid())` to `uuid(4)` on the wire —
+                # the schema text says one thing and the DMMF another. Consumers
+                # match on the generator, not the version, so strip it. Leaving
+                # it on made every `uuid()` schema fail to build at all.
+                'name': default.name.split('(', 1)[0],
+                'version': default.name[len(default.name.split('(', 1)[0]) :].strip('()') or None,
+                'args': args if isinstance(args, list) else ([] if args is None else [args]),
+            }
+
+        return {'kind': 'literal', 'value': default}
 
     @property
     def is_atomic(self) -> bool:

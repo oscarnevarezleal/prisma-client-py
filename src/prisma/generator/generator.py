@@ -24,7 +24,7 @@ from ..utils import DEBUG, DEBUG_GENERATOR
 from .errors import PartialTypeGeneratorError
 from .models import PythonData, DefaultData
 from .._types import BaseModelT, InheritsGeneric, get_args
-from .filters import quote
+from .filters import quote, unquote_forward_refs
 from .jsonrpc import Manifest
 from .._compat import model_json, model_parse, cached_property
 
@@ -59,6 +59,7 @@ DEFAULT_ENV = Environment(
 # and Pyright infers the type from the default builtin filters which
 # results in an overly restrictive type
 DEFAULT_ENV.filters['quote'] = quote  # pyright: ignore
+DEFAULT_ENV.filters['unquote_forward_refs'] = unquote_forward_refs  # pyright: ignore
 
 partial_models_ctx: ContextVar[List[PartialModel]] = ContextVar('partial_models_ctx', default=[])
 
@@ -245,6 +246,20 @@ class Generator(GenericGenerator[PythonData]):
             packaged_schema.write_text(data.datamodel)
 
         params = data.to_params()
+
+        if config.model_backend == 'slim' and not config.separate_model_files:
+            raise ValueError(
+                'modelBackend = "slim" currently requires separateModelFiles = true;\n'
+                'add `separateModelFiles = true` to your generator block.'
+            )
+
+        if config.model_backend == 'msgspec' and config.separate_model_files:
+            raise ValueError(
+                'modelBackend = "msgspec" is incompatible with separateModelFiles: msgspec\n'
+                'resolves cyclic relation references against a single module. Remove\n'
+                '`separateModelFiles = true` from your generator block (msgspec structs\n'
+                'compile no per-model schemas, so the single file stays cheap to import).'
+            )
 
         try:
             # Handle separate model files if enabled

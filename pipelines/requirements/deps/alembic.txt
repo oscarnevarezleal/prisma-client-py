@@ -1,0 +1,5 @@
+# 1.14 is the last line that still supports Python 3.8, which the test matrix
+# covers. `prisma.sa` never imports alembic — it renders the files as text — so
+# this is a test-only dependency: it is what lets the emitted `env.py` be type
+# checked and the baseline be applied to a real database.
+alembic==1.14.1

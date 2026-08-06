@@ -13,7 +13,10 @@ chokes on a huge `types.py`).
 paths (`from prisma import Prisma`, `from prisma.models import User`) are identical.
 What changes is how the client is *generated*.
 
-See [`benchmarks/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks) for the numbers behind the claims below.
+See [Performance Findings](performance-findings.md) for the consolidated measurements —
+what worked, what didn't, and where a Prisma query actually spends its time —
+or [`benchmarks/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks)
+for the harnesses behind the claims below.
 
 ## What's different at a glance
 
@@ -23,6 +26,116 @@ See [`benchmarks/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/de
 | `scalarFieldsOnly` | `PRISMA_PY_CONFIG_SCALAR_FIELDS_ONLY` | `false` | n/a |
 | `separateModelFiles` | `PRISMA_PY_CONFIG_SEPARATE_MODEL_FILES` | `false` | n/a |
 | `recursiveValidationModels` | `PRISMA_PY_CONFIG_RECURSIVE_VALIDATION_MODELS` | `false` | n/a |
+| `lazyActions` | `PRISMA_PY_CONFIG_LAZY_ACTIONS` | `false` | n/a |
+| `modelBackend` (experimental) | `PRISMA_PY_CONFIG_MODEL_BACKEND` | `"pydantic"` | n/a |
+| `schemaMetadata` | `PRISMA_PY_CONFIG_SCHEMA_METADATA` | `false` | n/a |
+
+Two further opt-ins are runtime environment flags rather than generator options:
+
+| Runtime flag | Default | What it does |
+| --- | --- | --- |
+| `PRISMA_PY_SHARED_ENGINE=1` | off | sync + async clients for the same schema/datasource share one query-engine process (refcounted); saves ~an engine process (~20-25 MB) and a spawn per extra client connected at the same time |
+| `PRISMA_PY_FAST_PARSE=1` | off | deserialize trusted engine responses without a validation pass. **Measured slower than pydantic-core validation on Pydantic v2** — kept for completeness, not recommended |
+| `PRISMA_PY_RAW_DECODE=1` | off | decode engine response bytes straight into records, skipping the intermediate dict. Requires `modelBackend = "msgspec"`; a no-op otherwise. **7-14% faster on bulk reads** (200+ rows), neutral on small ones — see below |
+
+### `PRISMA_PY_RAW_DECODE` (runtime flag, msgspec backend only)
+
+Normally a query costs `bytes -> dict -> records`. With this flag the client
+decodes the engine's raw bytes directly into record structs in one pass.
+
+It is a **bulk-read** optimization. Deserialization is only ~5% of a small
+query (the engine round-trip is ~93%), but its share grows with result size,
+so the win lands where result sets are large: ~10% at 200 rows, 7-14% at 400.
+Small responses stay on the plain path automatically — below
+`PRISMA_PY_RAW_DECODE_MIN_BYTES` (default `20000`) the typed decoder's fixed
+cost would exceed its saving — so enabling it never makes small queries slower.
+
+Aggregate methods (`count`, `group_by`, `*_many`) are excluded by design; they
+return counts rather than records. Errors, transactions, `include` relations
+and `Decimal`/`datetime` coercion all behave identically to the dict path.
+
+### `lazyActions` (default: off)
+
+Defers creating the per-model action namespaces (`client.user`, `client.post`, …)
+and importing the actions module until first database access. `Prisma()`
+construction and `import` become O(models you touch) instead of O(models in the
+schema). No API change; the first query on each model pays a one-time lookup.
+
+### `schemaMetadata` (default: off)
+
+Emits the physical database schema — table names, column names, primary keys,
+unique constraints, indexes, enum value mappings and fully resolved foreign
+keys — into the generated `metadata.py`, readable through `prisma._schema`.
+
+The generated client has never carried any of this. It names *models* and
+*fields* in a GraphQL-ish document and hands it to the Rust query engine, which
+parsed `schema.prisma` itself and knows the tables; `metadata.py` therefore held
+exactly two things, the set of model names and `field -> related model name`.
+Anything that emits SQL without the engine — a SQLAlchemy backend, a migration
+tool, a schema differ — cannot name a single table without the rest.
+
+It costs generation time and a larger `metadata.py`; leave it off unless
+something is reading it. See `docs/sqlalchemy-refactor/` for what consumes it.
+
+```prisma
+generator client {
+  provider       = "prisma-client-py"
+  schemaMetadata = true
+}
+```
+
+Two things it deliberately does *not* do. Prisma's default primary key
+constraint name is provider-specific (`<table>_pkey` on PostgreSQL, `PRIMARY` on
+MySQL), so an unmapped `@@id` reports `None` rather than a guess. And for a
+self-referential many-to-many, which side is join column `A` is not recoverable
+from the DMMF, so the relation is flagged `join_ambiguous` instead of being
+assigned a coin-flip that would silently join the wrong rows.
+
+### `modelBackend` (default: `"pydantic"`, experimental)
+
+Selects how record models are generated. Both alternative backends keep the
+pydantic-shaped surface most code relies on (`model_dump()`, `dict()`, `json()`,
+keyword construction, `Model.prisma()`), but **convert trusted engine data
+rather than validating arbitrary input** — keep the default backend where you
+feed untrusted data into models, or validate at the boundary. Not supported on
+either: subclass field overrides, the mypy plugin's model checks.
+`partialTypeGenerator` / `create_partial()` works on `"msgspec"` (the generated
+partials are structs too, with the same surface as the records) but not yet on
+`"slim"`.
+
+**`"msgspec"` — recommended alternative.** Generates
+[msgspec](https://jcristharif.com/msgspec/) `Struct` records decoded in C.
+Against the default backend it is ~8 MB lighter and modestly faster; against
+`"slim"` it is **statistically tied** (they finish within ~4% and the ordering
+has flipped between measurement runs), so choose on constraints rather than on
+the score — msgspec is a maintained C library and is the faster of the two on
+bulk deserialization. Requires `pip install prisma[msgspec]` (or
+`msgspec` directly) and is incompatible with `separateModelFiles` (cyclic
+relation references must resolve against a single module — cheap, since structs
+compile no per-model schemas). Records additionally offer `to_pydantic()`,
+returning a real `pydantic.BaseModel` (lazily built, cached twin class) for
+integrations that require one, e.g. FastAPI `response_model`.
+
+Known limitation: a populated `Json` column does not decode on this backend
+(msgspec requires the decode hook to return an instance of the annotated type,
+while the hook returns the plain decoded python object the pydantic backend
+produces). `Json` columns that are `NULL` are fine. This affects records and
+partial types alike.
+
+```prisma
+generator client {
+  provider     = "prisma-client-py"
+  modelBackend = "msgspec"
+}
+```
+
+**`"slim"` — zero-dependency alternative.** Pydantic-free `__slots__` records
+deserialized by exec-compiled per-model converters. Marginally lower RSS than
+msgspec and no third-party dependency, at the cost of hand-rolled
+deserializers this fork maintains itself. Requires `separateModelFiles = true`.
+
+See [`benchmarks/pg-lab/`](https://github.com/oscarnevarezleal/prisma-client-py/tree/develop/benchmarks/pg-lab)
+for the head-to-head measurements behind these recommendations.
 
 > **All options are opt-in (off by default), so installing the fork and regenerating
 > reproduces upstream output exactly.** Enable the options below as needed.

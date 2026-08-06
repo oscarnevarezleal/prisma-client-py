@@ -25,11 +25,17 @@ omit =
     # */prisma/engine/query.py
 
 
+# `@needs_pyright` marks the one test that shells out to pyright. It is excluded
+# rather than run everywhere because pyright pulls a node runtime down on first
+# use, which is too much to put in all eleven test jobs; `ruff` and
+# `mypy --strict` cover the same emitted source there, and this stays as extra
+# assurance wherever pyright happens to be installed.
 [report]
 exclude_lines =
     pragma: no cover
     mark: filedef
     @pytest.mark.skip\(?
+    @needs_pyright
     if TYPE_CHECKING
     \.\.\.
 

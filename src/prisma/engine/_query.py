@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import timedelta
 from typing_extensions import Literal, override
 
-from . import utils, errors
+from . import utils, errors, _shared
 from ._http import SyncHTTPEngine, AsyncHTTPEngine
 from ..utils import DEBUG, _env_bool, time_since
 from .._types import HttpConfig, TransactionId
@@ -50,6 +50,9 @@ class BaseQueryEngine:
         self._log_queries = log_queries
         self.process = None
         self.file = None
+        # set when this engine spawned or attached to a shared engine process
+        # (PRISMA_PY_SHARED_ENGINE=1); lifecycle then goes through the registry
+        self._shared_key: _shared.SharedKey | None = None
 
     def _ensure_file(self) -> Path:
         # circular import
@@ -116,26 +119,72 @@ class BaseQueryEngine:
 
         return self.url, self.process
 
-    def _kill_process(self, timeout: timedelta | None) -> None:
-        if self.process is None:
-            return
-
+    @staticmethod
+    def _terminate_popen(
+        process: subprocess.Popen[bytes] | subprocess.Popen[str],
+        timeout: timedelta | None,
+    ) -> None:
         if timeout is not None:
             total_seconds = timeout.total_seconds()
         else:
             total_seconds = None
 
         if platform.name() == 'windows':
-            self.process.kill()
-            self.process.wait(timeout=total_seconds)
+            process.kill()
+            process.wait(timeout=total_seconds)
         else:
-            self.process.send_signal(signal.SIGINT)
+            process.send_signal(signal.SIGINT)
             try:
-                self.process.wait(timeout=total_seconds)
+                process.wait(timeout=total_seconds)
             except subprocess.TimeoutExpired:
-                self.process.send_signal(signal.SIGKILL)
+                process.send_signal(signal.SIGKILL)
 
+    def _kill_process(self, timeout: timedelta | None) -> None:
+        if self._shared_key is not None:
+            # shared engine: drop our reference; the registry terminates the
+            # process (with our timeout semantics) once the last user is gone.
+            key, self._shared_key = self._shared_key, None
+            self.process = None
+
+            def kill(proc: 'subprocess.Popen[bytes]') -> None:
+                self._terminate_popen(proc, timeout)
+
+            _shared.registry.release(key, kill=kill)
+            return
+
+        if self.process is None:
+            return
+
+        self._terminate_popen(self.process, timeout)
         self.process = None
+
+    def _try_attach_shared(self, datasources: list[DatasourceOverride] | None) -> bool:
+        """Attach to an already-running shared engine, if one exists."""
+        if not _shared.enabled():
+            return False
+        key = _shared.make_key(self.dml_path, datasources)
+        url = _shared.registry.attach(key)
+        if url is None:
+            return False
+        self.url = url
+        self._shared_key = key
+        log.debug('Attached to shared query engine at %s', url)
+        return True
+
+    def _register_shared(self, datasources: list[DatasourceOverride] | None) -> None:
+        """Hand ownership of a freshly spawned engine process to the registry."""
+        if not _shared.enabled() or self.process is None or self.url is None:
+            return
+        key = _shared.make_key(self.dml_path, datasources)
+        winner = _shared.registry.register(key, self.url, self.process)
+        self._shared_key = key
+        if winner is not None:
+            # another thread spawned an engine for the same key first; adopt it
+            # and terminate ours rather than leaving an orphan behind
+            redundant, self.process = self.process, None
+            self.url = winner
+            log.debug('terminating redundant query engine, attached to %s instead', winner)
+            self._terminate_popen(redundant, None)
 
 
 class SyncQueryEngine(BaseQueryEngine, SyncHTTPEngine):
@@ -180,8 +229,11 @@ class SyncQueryEngine(BaseQueryEngine, SyncHTTPEngine):
         if datasources:
             log.debug('Datasources: %s', datasources)
 
-        if self.process is not None:
+        if self.process is not None or self._shared_key is not None:
             raise errors.AlreadyConnectedError('Already connected to the query engine')
+
+        if self._try_attach_shared(datasources):
+            return
 
         start = time.monotonic()
         self.file = file = self._ensure_file()
@@ -192,6 +244,7 @@ class SyncQueryEngine(BaseQueryEngine, SyncHTTPEngine):
             self.close()
             raise
 
+        self._register_shared(datasources)
         log.debug('Connecting to query engine took %s', time_since(start))
 
     def spawn(
@@ -234,6 +287,7 @@ class SyncQueryEngine(BaseQueryEngine, SyncHTTPEngine):
         content: str,
         *,
         tx_id: TransactionId | None,
+        decoder: Any = None,
     ) -> Any:
         headers: dict[str, str] = {}
         if tx_id is not None:
@@ -244,6 +298,7 @@ class SyncQueryEngine(BaseQueryEngine, SyncHTTPEngine):
             '/',
             content=content,
             headers=headers,
+            decoder=decoder,
         )
 
     @override
@@ -340,8 +395,11 @@ class AsyncQueryEngine(BaseQueryEngine, AsyncHTTPEngine):
         if datasources:
             log.debug('Datasources: %s', datasources)
 
-        if self.process is not None:
+        if self.process is not None or self._shared_key is not None:
             raise errors.AlreadyConnectedError('Already connected to the query engine')
+
+        if self._try_attach_shared(datasources):
+            return
 
         start = time.monotonic()
         self.file = file = self._ensure_file()
@@ -352,6 +410,7 @@ class AsyncQueryEngine(BaseQueryEngine, AsyncHTTPEngine):
             self.close()
             raise
 
+        self._register_shared(datasources)
         log.debug('Connecting to query engine took %s', time_since(start))
 
     async def spawn(
@@ -394,6 +453,7 @@ class AsyncQueryEngine(BaseQueryEngine, AsyncHTTPEngine):
         content: str,
         *,
         tx_id: TransactionId | None,
+        decoder: Any = None,
     ) -> Any:
         headers: dict[str, str] = {}
         if tx_id is not None:
@@ -404,6 +464,7 @@ class AsyncQueryEngine(BaseQueryEngine, AsyncHTTPEngine):
             '/',
             content=content,
             headers=headers,
+            decoder=decoder,
         )
 
     @override

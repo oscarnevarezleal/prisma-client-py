@@ -422,7 +422,10 @@ def test_partial_type_generator_not_found(testdir: Testdir) -> None:
         testdir.generate(SCHEMA, 'partial_type_generator = "foo.bar.baz"')
 
     output = exc.value.output.decode('utf8')
-    assert 'ValidationError' in output
+    # The generator reports validation failures as `str(exc)`, deliberately
+    # without a traceback, so the exception *class* name never reaches the
+    # output. What both pydantic versions do render is the summary line.
+    assert 'validation error for PythonData' in output
 
     if PYDANTIC_V2:
         line = output.splitlines()[-4]

@@ -1,0 +1,671 @@
+"""Tests for the physical schema reconstructed from the DMMF.
+
+The generated client has never known what a table is called — it names models
+and fields, and the Rust query engine, which parsed `schema.prisma` itself,
+turns those into SQL. A client that emits SQL directly has to reconstruct the
+physical schema from the DMMF, and every one of these assertions is something a
+generated query gets wrong if the reconstruction is wrong.
+
+The assertions are *absolute*, not differential: they name the exact table,
+column and constraint the database has. A differential test against the query
+engine would pass on any misreading both sides happen to share.
+
+The fixture is recorded from a real `prisma generate` against
+`data/dmmf_wire_sample.prisma`; re-record with
+`PRISMA_PY_DEBUG_GENERATOR=1 python -m prisma generate` and copy
+`src/prisma/generator/debug-params.json`, keeping only `datasources` and
+`dmmf.datamodel`.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, Iterator, Optional, cast
+
+import pytest
+
+from prisma._schema import UniqueSchema, RelationSchema, IndexFieldSchema, _RelationCommon
+from prisma.generator import models as generator_models
+from prisma.generator.models import (
+    Datamodel,
+    build_enum_metadata,
+    build_schema_metadata,
+)
+from prisma.generator._native_types import parse_relation_maps, parse_relation_mode, parse_relation_on_update
+
+from ..dmmf_sample import SAMPLE, RELATION_MODE_SAMPLE, schema_text, loaded_datamodel
+
+
+@pytest.fixture(scope='module', name='datamodel')
+def datamodel_fixture() -> Iterator[Datamodel]:
+    if not SAMPLE.exists():  # pragma: no cover
+        pytest.skip(f'wire sample not recorded at {SAMPLE}')
+
+    with loaded_datamodel() as datamodel:
+        yield datamodel
+
+
+@pytest.fixture(scope='module', name='schema')
+def schema_fixture(datamodel: Datamodel) -> Dict[str, Any]:
+    return build_schema_metadata(datamodel, schema_text())
+
+
+# -- naming ------------------------------------------------------------------
+
+
+def test_table_name_honours_at_at_map(schema: Dict[str, Any]) -> None:
+    assert schema['Account']['table'] == 'accounts'
+    # unmapped models keep the model name
+    assert schema['Entry']['table'] == 'Entry'
+
+
+def test_column_name_honours_at_map(schema: Dict[str, Any]) -> None:
+    assert schema['Account']['fields']['slug']['column'] == 'url_slug'
+    assert schema['Account']['fields']['email']['column'] == 'email'
+
+
+# -- keys and constraints ----------------------------------------------------
+
+
+def test_single_primary_key(schema: Dict[str, Any]) -> None:
+    pk = schema['Account']['primary_key']
+    assert pk['fields'] == ['id']
+    assert pk['columns'] == ['id']
+    # a single `@id` has no Prisma-level constraint name
+    assert pk['name'] is None
+
+
+def test_compound_primary_key_keeps_field_order(schema: Dict[str, Any]) -> None:
+    pk = schema['Composite']['primary_key']
+    assert pk['fields'] == ['left', 'right']
+    assert pk['columns'] == ['left', 'right']
+    assert pk['name'] == 'left_right'
+
+
+def test_compound_primary_key_reports_the_declared_order(schema: Dict[str, Any]) -> None:
+    """`@@id([right, left])` on a model that declares `left` first.
+
+    Prisma builds `PRIMARY KEY ("right", "left")`, so the declared order is the
+    physical one. `Composite` above declares the two in the same order, which is
+    why it cannot tell a reader that follows field order from one that does not.
+    """
+    pk = schema['KeyOrder']['primary_key']
+    assert pk['fields'] == ['right', 'left']
+    assert pk['columns'] == ['right', 'left']
+    assert list(schema['KeyOrder']['fields'])[:2] == ['left', 'right']
+
+
+def test_primary_key_db_name_is_not_guessed(schema: Dict[str, Any]) -> None:
+    """`<table>_pkey` is PostgreSQL's convention, not Prisma's.
+
+    MySQL calls it `PRIMARY`. Deriving one here would be wrong for half the
+    supported providers, so an unmapped `@@id` reports None.
+    """
+    assert schema['Composite']['primary_key']['db_name'] is None
+
+
+def test_unique_constraint_names_are_two_namespaces(schema: Dict[str, Any]) -> None:
+    unique = _unique_named(schema, 'Account', 'slug_role')
+    # what `where={'slug_role': ...}` uses
+    assert unique['name'] == 'slug_role'
+    # what the database calls the constraint — note it uses the *mapped* table
+    # and column names, not the Prisma ones
+    assert unique['db_name'] == 'accounts_url_slug_role_key'
+    assert unique['fields'] == ['slug', 'role']
+    assert unique['columns'] == ['url_slug', 'role']
+    assert unique['is_defined_on_field'] is False
+
+
+def test_field_level_unique_is_reported(schema: Dict[str, Any]) -> None:
+    """`@unique` on a field is *not* in `uniqueIndexes`.
+
+    Prisma reports it only as `Field.isUnique`, so a reader that trusts
+    `uniqueIndexes` alone silently loses every single-column unique — and with
+    it the `accounts_email_key` index the database actually has.
+    """
+    unique = _unique_named(schema, 'Account', 'email')
+    assert unique['db_name'] == 'accounts_email_key'
+    assert unique['columns'] == ['email']
+    assert unique['is_defined_on_field'] is True
+
+    # ...including when the column is mapped
+    mapped = _unique_named(schema, 'Profile', 'accountId')
+    assert mapped['db_name'] == 'Profile_account_id_key'
+    assert mapped['columns'] == ['account_id']
+
+
+def _unique_named(schema: Dict[str, Any], model: str, name: str) -> Dict[str, Any]:
+    found = [u for u in schema[model]['uniques'] if u['name'] == name]
+    assert found, f'{model} has no unique named {name!r}'
+    return cast('Dict[str, Any]', found[0])
+
+
+def test_index_name_is_resolved_when_unnamed(schema: Dict[str, Any]) -> None:
+    (index,) = schema['Entry']['indexes']
+    assert index['name'] == 'Entry_accountId_idx'
+    assert index['is_named'] is False
+    assert index['columns'] == ['accountId']
+
+
+def test_index_name_is_kept_when_mapped(schema: Dict[str, Any]) -> None:
+    (index,) = schema['Account']['indexes']
+    assert index['name'] == 'account_email_created_idx'
+    assert index['is_named'] is True
+    assert index['columns'] == ['email', 'createdAt']
+
+
+def test_id_and_unique_are_not_reported_as_indexes(schema: Dict[str, Any]) -> None:
+    """Prisma lists `@id`/`@@id`/`@unique`/`@@unique` in `datamodel.indexes`.
+
+    They are already reported as constraints; emitting them here too would make
+    a migration tool create a redundant index alongside every key.
+    """
+    assert [i['type'] for i in schema['Account']['indexes']] == ['normal']
+    assert schema['Composite']['indexes'] == []
+    assert schema['Profile']['indexes'] == []
+
+
+# -- defaults ----------------------------------------------------------------
+
+
+def test_generator_defaults(schema: Dict[str, Any]) -> None:
+    fields = schema['Account']['fields']
+    assert fields['id']['default'] == {'kind': 'generator', 'name': 'cuid', 'version': None, 'args': []}
+    assert fields['createdAt']['default'] == {'kind': 'generator', 'name': 'now', 'version': None, 'args': []}
+    assert schema['Label']['fields']['id']['default'] == {
+        'kind': 'generator',
+        'name': 'autoincrement',
+        'version': None,
+        'args': [],
+    }
+
+
+def test_versioned_generator_names_are_split(schema: Dict[str, Any]) -> None:
+    """Prisma normalises `@default(uuid())` to `uuid(4)` on the wire.
+
+    The schema text says one thing and the DMMF another. Consumers match on the
+    generator, so the version is separated out — leaving it attached made every
+    `uuid()` schema fail to build at all, with
+    `NotImplementedError: Unhandled Prisma default generator: uuid(4)()`.
+    """
+    default = schema['Ticket']['fields']['id']['default']
+    assert default == {'kind': 'generator', 'name': 'uuid', 'version': '4', 'args': []}
+
+
+def test_literal_defaults_are_not_confused_with_generators(schema: Dict[str, Any]) -> None:
+    fields = schema['Account']['fields']
+    # an enum default is the *Python* member name and still needs mapping
+    assert fields['role']['default'] == {'kind': 'literal', 'value': 'VIEWER'}
+    # BigInt arrives as a string; JSON has no 64-bit integer
+    assert fields['visits']['default'] == {'kind': 'literal', 'value': '0'}
+
+
+def test_updated_at_is_not_a_default(schema: Dict[str, Any]) -> None:
+    field = schema['Account']['fields']['updatedAt']
+    assert field['is_updated_at'] is True
+    assert field['default'] is None
+
+
+def test_no_default_reports_none(schema: Dict[str, Any]) -> None:
+    assert schema['Account']['fields']['email']['default'] is None
+
+
+# -- relation shapes ---------------------------------------------------------
+
+
+def test_to_one_owner(schema: Dict[str, Any]) -> None:
+    rel = schema['Entry']['relations']['account']
+    assert rel['shape'] == 'to-one-owner'
+    assert rel['owner'] is True
+    assert rel['fk_model'] == 'Entry'
+    assert rel['fk_columns'] == ['accountId']
+    assert rel['referenced_columns'] == ['id']
+    assert rel['back_field'] == 'posts'
+    assert rel['on_delete'] == 'Cascade'
+
+
+def test_to_one_inverse(schema: Dict[str, Any]) -> None:
+    """Same arity as `to-one-owner`, opposite physical arrangement.
+
+    `Account.profile` has no column of its own; resolving it means looking at
+    the foreign key on `Profile`.
+    """
+    rel = schema['Account']['relations']['profile']
+    assert rel['shape'] == 'to-one-inverse'
+    assert rel['owner'] is False
+    assert rel['fk_model'] == 'Profile'
+    assert rel['fk_columns'] == ['account_id']
+    assert rel['referenced_columns'] == ['id']
+    assert rel['back_field'] == 'account'
+
+
+def test_to_many(schema: Dict[str, Any]) -> None:
+    rel = schema['Account']['relations']['posts']
+    assert rel['shape'] == 'to-many'
+    assert rel['owner'] is False
+    assert rel['fk_model'] == 'Entry'
+    assert rel['fk_columns'] == ['accountId']
+
+
+def test_self_relation_resolves_both_sides(schema: Dict[str, Any]) -> None:
+    """A self-relation puts both sides on the same model.
+
+    Matching by `relationName` alone would pair a field with itself; the pairing
+    has to exclude by identity.
+    """
+    relations = schema['Entry']['relations']
+    assert relations['parent']['back_field'] == 'children'
+    assert relations['children']['back_field'] == 'parent'
+    assert relations['parent']['shape'] == 'to-one-owner'
+    assert relations['children']['shape'] == 'to-many'
+    assert relations['children']['fk_columns'] == ['parentId']
+
+
+# -- the P2014 decider -------------------------------------------------------
+
+
+def test_fk_required_is_derived_for_both_sides(schema: Dict[str, Any]) -> None:
+    """Whether `disconnect`/`set` are legal at all.
+
+    `Entry.accountId` is NOT NULL, so no row state expresses "disconnected" and
+    Prisma answers P2014. `Entry.parentId` is nullable, so the same operation is
+    fine. The list side has to report the same answer as the singular side —
+    it is the same column.
+    """
+    assert schema['Entry']['relations']['account']['fk_required'] is True
+    assert schema['Account']['relations']['posts']['fk_required'] is True
+
+    assert schema['Entry']['relations']['parent']['fk_required'] is False
+    assert schema['Entry']['relations']['children']['fk_required'] is False
+
+
+def test_on_delete_absent_means_prisma_default(schema: Dict[str, Any]) -> None:
+    """None is "whatever Prisma does for this arity", not "NoAction".
+
+    Prisma defaults to Cascade for a required relation and SetNull for an
+    optional one; reading None as NoAction silently changes delete semantics.
+    """
+    assert schema['Entry']['relations']['parent']['on_delete'] is None
+    assert schema['Entry']['relations']['account']['on_delete'] == 'Cascade'
+
+
+# -- `onUpdate`, which the DMMF does not carry at all -------------------------
+
+
+def test_on_update_is_recovered_from_the_schema_text(schema: Dict[str, Any]) -> None:
+    """Prisma sends no `relationOnUpdate` key, so this can only come from lexing.
+
+    Every declared action, including the one written after `map:` in the
+    argument list — the two lexed `@relation` arguments have to coexist and
+    neither may depend on the order they appear in.
+    """
+    relations = schema['MaintenanceLock']['relations']
+    assert relations['restricted']['on_update'] == 'Restrict'
+    assert relations['inert']['on_update'] == 'NoAction'
+    assert relations['nulled']['on_update'] == 'SetNull'
+    assert relations['defaulted']['on_update'] == 'SetDefault'
+
+    # ...and `map:` on that same field still reads correctly
+    assert relations['nulled']['fk_name'] == 'maintenance_lock_nulled_fk'
+
+
+def test_on_update_absent_means_prisma_default(schema: Dict[str, Any]) -> None:
+    """None is "whatever Prisma does", which for `onUpdate` is Cascade.
+
+    Baking that default in here would lose the distinction between "the schema
+    did not say" and "the schema said Cascade" — which is exactly how the
+    hardcoded CASCADE in the SQLAlchemy emitter went unnoticed.
+    """
+    assert schema['MaintenanceLock']['relations']['plain']['on_update'] is None
+    assert schema['Entry']['relations']['account']['on_update'] is None
+
+
+def test_on_update_is_independent_of_on_delete(schema: Dict[str, Any]) -> None:
+    """A field may declare either, both or neither; one cannot stand in for the other."""
+    relations = schema['MaintenanceLock']['relations']
+
+    assert relations['restricted']['on_update'] == 'Restrict'
+    assert relations['restricted']['on_delete'] == 'Cascade'
+
+    # `onUpdate` alone — `onDelete` still falls back to Prisma's arity default
+    assert relations['inert']['on_update'] == 'NoAction'
+    assert relations['inert']['on_delete'] is None
+
+
+def test_on_update_is_reported_on_the_inverse_side_too(schema: Dict[str, Any]) -> None:
+    """Both sides describe the same constraint, as they already do for `on_delete`.
+
+    The inverse side has no `@relation(onUpdate:)` of its own to lex, so it has
+    to be read off the owning field on the other model.
+    """
+    holder = schema['MaintenanceLockHolder']['relations']
+    assert holder['restricted']['owner'] is False
+    assert holder['restricted']['on_update'] == 'Restrict'
+    assert holder['plain']['on_update'] is None
+
+
+def test_many_to_many_has_no_on_update(schema: Dict[str, Any]) -> None:
+    """Prisma rejects a referential action on an implicit m2m, so neither side has one."""
+    assert schema['Entry']['relations']['labels']['on_update'] is None
+    assert schema['Label']['relations']['entries']['on_update'] is None
+
+
+def test_self_relation_reports_on_update_on_both_sides(schema: Dict[str, Any]) -> None:
+    """A self-relation resolves the owner by field, not by model, so it needs its own case."""
+    relations = schema['Entry']['relations']
+    assert relations['parent']['on_update'] is None
+    assert relations['children']['on_update'] is None
+
+
+def test_without_schema_text_on_update_is_absent(datamodel: Datamodel) -> None:
+    """No raw schema, no lexing — and absence has to read as the default, not as a crash.
+
+    The generator can be invoked without the schema text; every consumer already
+    has to treat `None` as "Prisma's default", so this degrades to exactly the
+    behaviour of a schema that declares nothing.
+    """
+    built = build_schema_metadata(datamodel)
+    assert built['MaintenanceLock']['relations']['restricted']['on_update'] is None
+    assert built['MaintenanceLock']['relations']['restricted']['relation_mode'] is None
+
+
+# -- `relationMode`, which the DMMF does not carry either ---------------------
+
+
+@pytest.fixture(scope='module', name='relation_mode_schema')
+def relation_mode_schema_fixture() -> Iterator[Dict[str, Any]]:
+    if not RELATION_MODE_SAMPLE.exists():  # pragma: no cover
+        pytest.skip(f'wire sample not recorded at {RELATION_MODE_SAMPLE}')
+
+    with loaded_datamodel(RELATION_MODE_SAMPLE) as datamodel:
+        yield build_schema_metadata(datamodel, schema_text(RELATION_MODE_SAMPLE))
+
+
+def test_relation_mode_is_recovered_from_the_schema_text(relation_mode_schema: Dict[str, Any]) -> None:
+    """Prisma sends no relation-mode key, so this can only come from lexing.
+
+    Reported on every relation, both sides and every shape: it is a datasource
+    setting, and a consumer deciding whether to emit a constraint is looking at
+    one relation at a time.
+    """
+    modes = {
+        (model, name): relation['relation_mode']
+        for model, spec in relation_mode_schema.items()
+        for name, relation in spec['relations'].items()
+    }
+    assert modes, 'the sample schema declares no relations'
+    assert set(modes.values()) == {'prisma'}
+    assert modes[('Member', 'tenant')] == 'prisma'  # owner
+    assert modes[('Tenant', 'members')] == 'prisma'  # inverse
+    assert modes[('Member', 'groups')] == 'prisma'  # many-to-many
+    assert modes[('Member', 'manager')] == 'prisma'  # self-relation
+
+
+def test_relation_mode_absent_means_prisma_default(schema: Dict[str, Any]) -> None:
+    """The first reference schema declares none, which is `foreignKeys`.
+
+    Baking `foreignKeys` in here would lose the distinction between "the
+    datasource did not say" and "the datasource said so" --- and every consumer
+    already has to treat None as "Prisma's default".
+    """
+    modes = {relation['relation_mode'] for spec in schema.values() for relation in spec['relations'].values()}
+    assert modes == {None}
+
+
+def test_relation_mode_does_not_disturb_the_other_lexed_arguments(relation_mode_schema: Dict[str, Any]) -> None:
+    """`@relation(map:)` is still accepted in this mode, and still reads."""
+    assert relation_mode_schema['Config']['relations']['tenant']['fk_name'] == 'config_tenant_fk'
+    assert relation_mode_schema['Member']['relations']['manager']['on_update'] == 'Restrict'
+    assert relation_mode_schema['Member']['relations']['manager']['on_delete'] == 'Restrict'
+
+
+@pytest.mark.parametrize(
+    ('source', 'expected'),
+    [
+        ('datasource db {\n  provider = "postgresql"\n  relationMode = "prisma"\n}\n', 'prisma'),
+        ('datasource db {\n  provider = "mysql"\n  relationMode = "foreignKeys"\n}\n', 'foreignKeys'),
+        # Prisma accepts whitespace around the `=`
+        ('datasource db {\n  relationMode="prisma"\n}\n', 'prisma'),
+        # not declared at all
+        ('datasource db {\n  provider = "postgresql"\n}\n', None),
+        # no datasource block at all, e.g. a `prismaSchemaFolder` file holding
+        # only models
+        ('model Child {\n  id String @id\n}\n', None),
+        # commented out
+        ('datasource db {\n  // relationMode = "prisma"\n}\n', None),
+        # the text inside a value is not the setting
+        ('datasource db {\n  url = env("relationMode = \\"prisma\\"")\n}\n', None),
+        # a *generator* block is a different namespace and owns no such key
+        ('generator client {\n  relationMode = "prisma"\n}\n', None),
+    ],
+)
+def test_lexes_relation_mode(source: str, expected: Optional[str]) -> None:
+    assert parse_relation_mode(source) == expected
+
+
+def test_relation_mode_is_read_from_the_datasource_that_declares_it() -> None:
+    """A `prismaSchemaFolder` schema is concatenated before it reaches the lexer.
+
+    The datasource block can then sit after model blocks rather than at the top,
+    and the scan has to find it wherever it is.
+    """
+    source = 'model Child {\n  id String @id\n}\n\ndatasource db {\n  relationMode = "prisma"\n}\n'
+    assert parse_relation_mode(source) == 'prisma'
+
+
+# -- implicit many-to-many ---------------------------------------------------
+
+
+def test_many_to_many_join_table(schema: Dict[str, Any]) -> None:
+    entry_side = schema['Entry']['relations']['labels']
+    label_side = schema['Label']['relations']['entries']
+
+    assert entry_side['shape'] == 'many-to-many'
+    assert label_side['shape'] == 'many-to-many'
+
+    # `_<relationName>`, and the relation name defaults to the two model names
+    # in alphabetical order
+    assert entry_side['join_table'] == '_EntryToLabel'
+    assert label_side['join_table'] == '_EntryToLabel'
+
+    # column `A` belongs to whichever model sorts first
+    assert entry_side['join_self_column'] == 'A'
+    assert entry_side['join_other_column'] == 'B'
+    assert label_side['join_self_column'] == 'B'
+    assert label_side['join_other_column'] == 'A'
+
+    assert entry_side['join_ambiguous'] is False
+
+
+def test_many_to_many_has_no_foreign_key_columns(schema: Dict[str, Any]) -> None:
+    rel = schema['Entry']['relations']['labels']
+    assert rel['fk_model'] is None
+    assert rel['fk_columns'] == []
+    # nothing to null, so `disconnect` is always legal
+    assert rel['fk_required'] is False
+
+
+def test_self_many_to_many_refuses_to_guess(schema: Dict[str, Any]) -> None:
+    """Which side is column `A` is not recoverable from the DMMF here.
+
+    Both sides are the same model, so the alphabetical rule does not break the
+    tie. Emitting a coin-flip would produce a join that silently returns the
+    wrong rows, so the ambiguity is reported instead.
+    """
+    for name in ('related', 'similar'):
+        rel = schema['Label']['relations'][name]
+        assert rel['join_table'] == '_similar'
+        assert rel['join_ambiguous'] is True
+        assert rel['join_self_column'] is None
+        assert rel['join_other_column'] is None
+
+
+# -- enums -------------------------------------------------------------------
+
+
+def test_enum_value_mapping(datamodel: Datamodel) -> None:
+    enums = build_enum_metadata(datamodel)
+    assert enums['Role']['db_name'] == 'Role'
+    # `@map("administrator")` — writing 'ADMIN' to this column fails
+    assert enums['Role']['values'] == {
+        'OWNER': 'OWNER',
+        'ADMIN': 'administrator',
+        'VIEWER': 'VIEWER',
+    }
+
+
+# -- structural ---------------------------------------------------------------
+
+
+def test_relations_are_not_reported_as_columns(schema: Dict[str, Any]) -> None:
+    """Relation fields have no column of their own; the FK scalar does."""
+    fields = schema['Entry']['fields']
+    assert 'account' not in fields
+    assert 'accountId' in fields
+    # ...and the FK scalar is flagged read-only, which is what makes writing to
+    # it directly an error rather than a silent divergence from the relation
+    assert fields['accountId']['is_read_only'] is True
+
+
+def test_every_model_is_present(schema: Dict[str, Any], datamodel: Datamodel) -> None:
+    assert set(schema) == {model.name for model in datamodel.models}
+
+
+def test_relation_payload_matches_its_typed_view(schema: Dict[str, Any]) -> None:
+    """`prisma._schema.RelationSchema` is the only description consumers read.
+
+    The payload is plain dicts, so a key added to one and not the other is
+    invisible until a caller indexes something that is not there — or, worse,
+    quietly keeps reading a key nobody maintains. Both directions are checked:
+    every always-present key must actually be present on every relation, and no
+    relation may carry a key the typed view does not describe.
+    """
+    for model, spec in schema.items():
+        for name, relation in spec['relations'].items():
+            where = f'{model}.{name}'
+            assert not set(_RelationCommon.__annotations__) - set(relation), where
+            assert not set(relation) - set(RelationSchema.__annotations__), where
+
+
+def test_unique_payload_matches_its_typed_view(schema: Dict[str, Any]) -> None:
+    """`prisma._schema.UniqueSchema` is the only description consumers read.
+
+    The same both-directions check the relations get above: a key added to the
+    payload and not the typed view is a modifier nobody knows to read, which is
+    how `@@unique([a, b(sort: Desc)])` reached the database as `(a, b)`.
+    """
+    for model, spec in schema.items():
+        for unique in spec['uniques']:
+            where = f'{model}.{unique["name"]}'
+            assert set(UniqueSchema.__annotations__) == set(unique), where
+            for modifier in unique['field_modifiers']:
+                assert set(IndexFieldSchema.__annotations__) == set(modifier), where
+
+
+def test_unique_field_modifiers_are_reported(schema: Dict[str, Any]) -> None:
+    """`@@unique` takes `sort:` and Prisma honours it, per `prisma db push`.
+
+    Reported apart from `fields`, which is the *Prisma* field names — the key a
+    `where={...}` uses — and not index members.
+    """
+    unique = _unique_named(schema, 'Catalog', 'code_seq')
+    assert unique['columns'] == ['code', 'seq']
+    assert [f['sort_order'] for f in unique['field_modifiers']] == [None, 'desc']
+
+    # ...and a field-level `@unique(sort: Desc)`, which is the same wire object
+    field_level = _unique_named(schema, 'Ledger', 'ref')
+    assert field_level['is_defined_on_field'] is True
+    assert [f['sort_order'] for f in field_level['field_modifiers']] == ['desc']
+
+
+def test_index_operator_classes_are_reported(schema: Dict[str, Any]) -> None:
+    """`ops: raw(...)` and a built-in arrive in the same field, spelled differently.
+
+    Nothing downstream can tell them apart by position, so the shape of the value
+    is the only signal: Prisma's own names are PascalCase, PostgreSQL's are lower
+    snake case.
+    """
+    by_name = {index['name']: index for index in schema['Catalog']['indexes']}
+    assert [f['operator_class'] for f in by_name['catalog_slug_pattern_idx']['fields']] == ['text_pattern_ops']
+    assert [f['operator_class'] for f in by_name['catalog_payload_path_idx']['fields']] == ['JsonbPathOps']
+    assert [f['operator_class'] for f in by_name['catalog_title_code_idx']['fields']] == ['text_pattern_ops', None]
+    # lower case on the wire, unlike the schema language's `Asc`/`Desc`
+    assert [f['sort_order'] for f in by_name['catalog_title_code_idx']['fields']] == ['asc', None]
+
+
+def test_literal_round_trips(schema: Dict[str, Any]) -> None:
+    """It is emitted into generated code as source, so it must survive repr()."""
+    import ast
+
+    rendered = generator_models.as_literal(schema)
+    assert ast.literal_eval(rendered.strip()) == schema
+
+
+# -- the `@relation` lexer ----------------------------------------------------
+#
+# `parse_relation_on_update` reads text Prisma's own parser has already
+# accepted, so the cases that matter are the ones where a naive regex reads
+# something that is *not* an argument, or misses one that is.
+
+
+def model_source(field: str) -> str:
+    return 'model Child {{\n  id String @id\n  {}\n}}\n'.format(field)
+
+
+@pytest.mark.parametrize(
+    ('field', 'expected'),
+    [
+        (
+            'parent Parent @relation(fields: [parentId], references: [id], onUpdate: Restrict)',
+            'Restrict',
+        ),
+        # any order, and alongside the other arguments the lexer reads
+        (
+            'parent Parent @relation(onUpdate: NoAction, fields: [parentId], references: [id], map: "fk")',
+            'NoAction',
+        ),
+        # Prisma accepts whitespace around the colon
+        (
+            'parent Parent @relation ( fields: [parentId], references: [id], onUpdate : SetNull )',
+            'SetNull',
+        ),
+        # a `)` inside a quoted value must not end the argument list early
+        (
+            'parent Parent @relation(fields: [parentId], references: [id], map: "a)b", onUpdate: SetDefault)',
+            'SetDefault',
+        ),
+        # declared on the *other* attribute, which is a different constraint
+        ('parent Parent @relation(fields: [parentId], references: [id], onDelete: Cascade)', None),
+        # a relation *name* that happens to spell the argument
+        ('parent Parent @relation("onUpdate: Cascade", fields: [parentId], references: [id])', None),
+        # ...and a constraint name that does
+        ('parent Parent @relation(fields: [parentId], references: [id], map: "onUpdate: Cascade")', None),
+        # commented out entirely
+        ('// parent Parent @relation(fields: [parentId], references: [id], onUpdate: Restrict)', None),
+        # trailing comment after a field that declares nothing
+        ('parent Parent @relation(fields: [parentId], references: [id]) // onUpdate: Restrict', None),
+        # not valid Prisma, and not something to guess the end of either
+        ('parent Parent @relation(fields: [parentId], references: [id], onUpdate: Restrict', None),
+        # no `@relation` at all
+        ('title String @db.VarChar(40)', None),
+    ],
+)
+def test_lexes_on_update(field: str, expected: Optional[str]) -> None:
+    parsed = parse_relation_on_update(model_source(field))
+    assert parsed.get('Child', {}).get('parent') == expected
+
+
+def test_block_attributes_are_not_fields() -> None:
+    """`@@index(map:)` is a different namespace and no field owns it."""
+    assert parse_relation_on_update('model Child {\n  @@index([a], map: "onUpdate: Restrict")\n}\n') == {}
+
+
+def test_map_still_reads_with_a_paren_in_the_name() -> None:
+    """The shared scanner is what makes this work; `[^)]*` dropped it silently."""
+    source = model_source('parent Parent @relation(fields: [parentId], references: [id], map: "a)b")')
+    assert parse_relation_maps(source) == {'Child': {'parent': 'a)b'}}
+
+
+def test_map_without_a_string_value_is_reported_absent() -> None:
+    """Not valid Prisma; the lexer reports what it cannot read rather than guessing."""
+    source = model_source('parent Parent @relation(fields: [parentId], references: [id], map: fk)')
+    assert parse_relation_maps(source) == {}

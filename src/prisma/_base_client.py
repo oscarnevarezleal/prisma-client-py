@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import logging
 import warnings
 from types import TracebackType
@@ -26,6 +27,64 @@ from ._registry import get_client
 from .generator.models import EngineType
 
 log: logging.Logger = logging.getLogger(__name__)
+
+
+# Methods whose `result` is a record (or list/None of records) and can therefore
+# be decoded straight from the response bytes. count/group_by/*_many return
+# scalars or aggregate dicts, which the record-typed decoder would reject.
+RAW_DECODE_METHODS: frozenset[str] = frozenset(
+    {
+        'create',
+        'delete',
+        'update',
+        'upsert',
+        'find_many',
+        'find_first',
+        'find_first_or_raise',
+        'find_unique',
+        'find_unique_or_raise',
+    }
+)
+
+_RAW_DECODE_ENABLED: bool = os.environ.get('PRISMA_PY_RAW_DECODE', '') not in ('', '0', 'false', 'False')
+
+# (method, model) -> decoder or None. This sits on the hot path of every query,
+# so the answer is memoized rather than recomputed (and the msgspec import kept
+# out of it): the pairs are bounded by methods x models.
+_DECODER_CACHE: dict[tuple[str, Any], object | None] = {}
+
+
+def _response_decoder(
+    method: str,
+    model: type[BaseModel] | None,
+    root_selection: list[str] | None = None,
+) -> object | None:
+    """A one-pass decoder for this call, or None to take the dict path.
+
+    `root_selection` narrows the fields the engine returns, so the response no
+    longer has the shape the typed decoder was built for. Rather than key the
+    cache on it — the selections are unbounded, and a decoder per selection
+    would be built once and reused never — those calls fall back to the dict
+    path, which handles any shape.
+    """
+    if not _RAW_DECODE_ENABLED or model is None or root_selection is not None:
+        return None
+
+    key = (method, model)
+    try:
+        return _DECODER_CACHE[key]
+    except KeyError:
+        pass
+
+    decoder = None
+    if method in RAW_DECODE_METHODS:
+        from ._msgspecmodel import envelope_decoder, supports_raw_decode
+
+        if supports_raw_decode(model):
+            decoder = envelope_decoder(model)
+
+    _DECODER_CACHE[key] = decoder
+    return decoder
 
 
 class UseClientDefault:
@@ -420,7 +479,11 @@ class SyncBasePrisma(BasePrisma[SyncAbstractEngine]):
         builder = self._make_query_builder(
             method=method, model=model, arguments=arguments, root_selection=root_selection
         )
-        return self._engine.query(builder.build(), tx_id=self._tx_id)
+        return self._engine.query(
+            builder.build(),
+            tx_id=self._tx_id,
+            decoder=_response_decoder(method, model, root_selection),
+        )
 
 
 class AsyncBasePrisma(BasePrisma[AsyncAbstractEngine]):
@@ -540,4 +603,8 @@ class AsyncBasePrisma(BasePrisma[AsyncAbstractEngine]):
         builder = self._make_query_builder(
             method=method, model=model, arguments=arguments, root_selection=root_selection
         )
-        return await self._engine.query(builder.build(), tx_id=self._tx_id)
+        return await self._engine.query(
+            builder.build(),
+            tx_id=self._tx_id,
+            decoder=_response_decoder(method, model, root_selection),
+        )

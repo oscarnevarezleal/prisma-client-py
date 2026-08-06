@@ -129,19 +129,34 @@ class Runner:
         we need to override the subprocess.run method to pipe the output and then
         print the output ourselves so that it can be captured by anything higher in
         call stack.
+
+        Capturing is all this does. It deliberately does *not* force text mode:
+        every caller in `src/prisma` reads `proc.stdout` as bytes, via
+        `str(stdout, encoding)` or `.decode()`, so handing them a `str` makes
+        them raise — `_get_binary_version` with `'str' object has no attribute
+        'decode'`, the others with `decoding str is not supported`. Which of
+        those fire depends on whether a node/engine version check happens to run
+        inside the test, which is why this was invisible for so long.
         """
 
-        def _patched_subprocess_run(*args: Any, **kwargs: Any) -> 'subprocess.CompletedProcess[str]':
+        def _decoded(output: Any) -> str:
+            if isinstance(output, bytes):
+                return output.decode(sys.getdefaultencoding(), errors='replace')
+            # reachable only when a caller passes `text=True` and gets a `str`
+            # back; nothing in the suite does, and forcing one just to execute
+            # this line would be a test of the fixture rather than of anything
+            return '' if output is None else str(output)  # pragma: no cover
+
+        def _patched_subprocess_run(*args: Any, **kwargs: Any) -> 'subprocess.CompletedProcess[Any]':
             kwargs['stdout'] = subprocess.PIPE
             kwargs['stderr'] = subprocess.PIPE
-            kwargs['encoding'] = sys.getdefaultencoding()
 
             process = old_subprocess_run(*args, **kwargs)
 
-            assert isinstance(process.stdout, str)
-
-            print(process.stdout)
-            print(process.stderr, file=sys.stderr)
+            # decode for printing only; `process` is returned with whatever type
+            # the caller's own arguments asked for
+            print(_decoded(process.stdout))
+            print(_decoded(process.stderr), file=sys.stderr)
             return process
 
         old_subprocess_run = subprocess.run

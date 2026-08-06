@@ -83,6 +83,26 @@ make docs-serve
 
 We use [nox](https://nox.thea.codes/) to run tests written with [pytest](https://docs.pytest.org/)
 
+!!! warning "Running `pytest` directly needs `PYTEST_PLUGINS=pytester`"
+
+    A large part of the suite generates clients into temporary directories via
+    the `testdir` fixture, which is built on pytest's `pytester` plugin. That
+    plugin is opt-in, and `nox -s test` enables it through the environment:
+
+    ```bash
+    PYTEST_PLUGINS=pytester pytest tests/ --ignore=databases
+    ```
+
+    Without it, every `testdir`-based test **errors at setup** with
+    `fixture 'pytester' not found` — around 50 of them. That reads like a broken
+    suite and is not.
+
+    A second thing to watch for: `pytester` remaps `HOME` for isolation, so
+    subprocesses lose anything installed into a *user* site-packages directory
+    (`pip install --user`). If tests fail with `ModuleNotFoundError` for a
+    dependency you can import fine yourself, that is why — install into the
+    environment's normal site-packages.
+
 ### Where Would I Write The Test?
 
 We have a few places where you can write tests:

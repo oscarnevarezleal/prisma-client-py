@@ -242,6 +242,19 @@ def model_copy(model: _ModelT, deep: bool = False) -> _ModelT:
     return model.copy(deep=deep)  # pyright: ignore[reportDeprecated]
 
 
+def model_construct(model: type[_ModelT], **values: Any) -> _ModelT:
+    """Build an instance without running validation.
+
+    Pydantic v1 spells this `construct`. Callers here are converting data that
+    is already typed — engine responses, or msgspec structs being mirrored into
+    a pydantic twin — so there is nothing left for validation to establish.
+    """
+    if PYDANTIC_V2:
+        return model.model_construct(**values)
+
+    return model.construct(**values)  # pyright: ignore[reportDeprecated]
+
+
 def model_json(
     model: BaseModel,
     *,
@@ -285,11 +298,43 @@ def model_rebuild(model: type[BaseModel]) -> None:
         model.update_forward_refs()  # pyright: ignore[reportDeprecated]
 
 
-def model_parse(model: type[_ModelT], obj: Any) -> _ModelT:
+def _fast_parse_enabled() -> bool:
+    global _fast_parse_cache
+    if _fast_parse_cache is None:
+        import os
+
+        _fast_parse_cache = os.environ.get('PRISMA_PY_FAST_PARSE', '') not in ('', '0', 'false', 'False')
+    return _fast_parse_cache
+
+
+_fast_parse_cache: bool | None = None
+
+
+def model_parse_strict(model: type[_ModelT], obj: Any) -> _ModelT:
+    """Always run full validation, bypassing the fast-parse switch."""
     if PYDANTIC_V2:
         return model.model_validate(obj)
     else:
         return model.parse_obj(obj)  # pyright: ignore[reportDeprecated]
+
+
+def model_parse(model: type[_ModelT], obj: Any) -> _ModelT:
+    # slim/msgspec backend models deserialize themselves (no pydantic involved)
+    if getattr(model, '__prisma_slim__', False):
+        if isinstance(obj, model):
+            # one-pass decode (PRISMA_PY_RAW_DECODE) already built this record
+            # straight from the response bytes
+            return obj
+        return model.from_engine(obj)  # type: ignore[attr-defined,no-any-return]
+
+    # PRISMA_PY_FAST_PARSE: trusted engine responses skip validation and are
+    # built with model_construct after a compiled per-model conversion plan
+    if PYDANTIC_V2 and isinstance(obj, dict) and hasattr(model, '__prisma_model__') and _fast_parse_enabled():
+        from ._fastparse import fast_parse
+
+        return fast_parse(model, obj)  # type: ignore[no-any-return]
+
+    return model_parse_strict(model, obj)
 
 
 def model_parse_json(model: type[_ModelT], obj: str) -> _ModelT:

@@ -1,0 +1,112 @@
+{
+  "history": [
+    {
+      "iteration": 0,
+      "name": "baseline",
+      "verdict": "ACCEPT",
+      "options": {
+        "recursive_type_depth": "-1",
+        "minimalRuntime": "true",
+        "separateModelFiles": "true"
+      },
+      "unified": true,
+      "note": "",
+      "rss_final_mb": 63.8,
+      "import_total_ms": 345.3,
+      "connect_total_ms": 137.4,
+      "query_total_ms": 28.18,
+      "composite": 96.1
+    },
+    {
+      "iteration": 1,
+      "name": "lazy-actions",
+      "verdict": "ACCEPT",
+      "options": {
+        "recursive_type_depth": "-1",
+        "minimalRuntime": "true",
+        "separateModelFiles": "true",
+        "lazyActions": "true"
+      },
+      "unified": true,
+      "note": "composite -2.5%",
+      "rss_final_mb": 64.0,
+      "import_total_ms": 313.8,
+      "connect_total_ms": 138.7,
+      "query_total_ms": 27.63,
+      "composite": 93.66
+    },
+    {
+      "iteration": 2,
+      "name": "shared-engine",
+      "verdict": "REJECT",
+      "options": {
+        "recursive_type_depth": "-1",
+        "minimalRuntime": "true",
+        "separateModelFiles": "true",
+        "lazyActions": "true"
+      },
+      "unified": true,
+      "note": "improvement -1.75% < threshold",
+      "rss_final_mb": 64.1,
+      "import_total_ms": 319.4,
+      "connect_total_ms": 147.2,
+      "query_total_ms": 27.37,
+      "composite": 95.3
+    },
+    {
+      "iteration": 3,
+      "name": "fast-parse",
+      "verdict": "REJECT",
+      "options": {
+        "recursive_type_depth": "-1",
+        "minimalRuntime": "true",
+        "separateModelFiles": "true",
+        "lazyActions": "true"
+      },
+      "unified": true,
+      "note": "improvement -0.59% < threshold",
+      "rss_final_mb": 64.2,
+      "import_total_ms": 304.8,
+      "connect_total_ms": 134.8,
+      "query_total_ms": 29.87,
+      "composite": 94.21
+    },
+    {
+      "iteration": 4,
+      "name": "slim-models",
+      "verdict": "ACCEPT",
+      "options": {
+        "recursive_type_depth": "-1",
+        "minimalRuntime": "true",
+        "separateModelFiles": "true",
+        "lazyActions": "true",
+        "modelBackend": "\"slim\""
+      },
+      "unified": true,
+      "note": "composite -2.9%",
+      "rss_final_mb": 58.3,
+      "import_total_ms": 327.7,
+      "connect_total_ms": 135.5,
+      "query_total_ms": 26.39,
+      "composite": 90.91
+    }
+  ],
+  "summary": {
+    "final_options": {
+      "recursive_type_depth": "-1",
+      "minimalRuntime": "true",
+      "separateModelFiles": "true",
+      "lazyActions": "true",
+      "modelBackend": "\"slim\""
+    },
+    "final_env": {},
+    "unified": true,
+    "final_scores": {
+      "rss_final_mb": 58.3,
+      "import_total_ms": 327.7,
+      "connect_total_ms": 135.5,
+      "query_total_ms": 26.39,
+      "composite": 90.91
+    }
+  }
+}

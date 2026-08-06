@@ -1,0 +1,2042 @@
+{
+  "datasources": [
+    {
+      "name": "db",
+      "provider": "postgresql",
+      "activeProvider": "postgresql",
+      "url": {
+        "fromEnvVar": "BENCH_DATABASE_URL",
+        "value": null
+      },
+      "schemas": [],
+      "sourceFilePath": "/tmp/claude-0/-home-user-prisma-client-py/29c2c0a1-cc17-55e1-b01b-febca43467c6/scratchpad/rerecord/schema.prisma"
+    }
+  ],
+  "datamodel": "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"BENCH_DATABASE_URL\")\n}\n\ngenerator client {\n  provider                    = \"python -m prisma\"\n  interface                   = \"asyncio\"\n  output                      = \"./client\"\n  enable_experimental_decimal = true\n  schemaMetadata              = true\n}\n\nenum Role {\n  OWNER\n  ADMIN  @map(\"administrator\")\n  VIEWER\n}\n\nmodel Account {\n  id        String   @id @default(cuid())\n  email     String   @unique\n  slug      String   @map(\"url_slug\")\n  role      Role     @default(VIEWER)\n  balance   Decimal\n  payload   Json?\n  secret    Bytes?\n  visits    BigInt   @default(0)\n  tags      String[]\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n  posts     Entry[]\n  profile   Profile?\n\n  @@unique([slug, role], name: \"slug_role\")\n  @@index([email, createdAt], map: \"account_email_created_idx\")\n  @@map(\"accounts\")\n}\n\nmodel Entry {\n  id        String  @id @default(cuid())\n  accountId String\n  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)\n  title     String\n  parentId  String?\n  parent    Entry?  @relation(\"tree\", fields: [parentId], references: [id])\n  children  Entry[] @relation(\"tree\")\n  labels    Label[]\n\n  @@index([accountId])\n}\n\n// The FK lives on the *other* side of a to-one relation, which compiles\n// differently to `Entry.account` even though both are `to-one`.\nmodel Profile {\n  id        Int     @id @default(autoincrement())\n  accountId String  @unique @map(\"account_id\")\n  account   Account @relation(fields: [accountId], references: [id])\n  bio       String?\n}\n\nmodel Label {\n  id      Int     @id @default(autoincrement())\n  name    String  @map(\"label_name\")\n  entries Entry[]\n  related Label[] @relation(\"similar\")\n  similar Label[] @relation(\"similar\")\n\n  @@map(\"labels\")\n}\n\nmodel Composite {\n  left  String\n  right String\n  note  String?\n\n  @@id([left, right])\n}\n\n// Every model below covers a defect found by a client running the migration\n// runbook against a 182-model production schema. All five produced either a\n// crash or a silent divergence, and none was reachable from the models above.\nmodel Ticket {\n  // B2: Prisma normalises `uuid()` to `uuid(4)` on the wire. Left attached, the\n  // versioned name matched no allowlist entry and blocked the whole schema.\n  id String @id @default(uuid()) @db.Uuid\n\n  // B5: a non-primary-key autoincrement. SQLAlchemy emits SERIAL only for an\n  // integer *primary* key, so this silently lost its sequence and every INSERT\n  // failed \u2014 with an empty Alembic diff, because server defaults are not\n  // compared.\n  ticketNumber Int    @default(autoincrement())\n  bigNumber    BigInt @default(autoincrement())\n\n  // B4: an empty scalar list default. A bare `ARRAY[]` is a PostgreSQL error,\n  // not a diff: `cannot determine type of empty array`.\n  readBy   String[] @default([]) @db.Uuid\n  keywords String[] @default([\"urgent\", \"billing\"])\n\n  // B1: `@db.*` never reaches the generator payload, so these read as `text`\n  // unless the raw schema is lexed. On the reporting client that was 554\n  // columns including every primary and foreign key.\n  reference String   @db.VarChar(40)\n  amount    Decimal  @db.Decimal(12, 2)\n  seenAt    DateTime @db.Timestamptz(6)\n  priority  Int      @db.SmallInt\n\n  links   TicketAttachmentRequirement[]\n  regions Region[]\n}\n\n// B3: the derived unique constraint name is 77 characters. PostgreSQL truncates\n// at 63 and so does Prisma; SQLAlchemy raises `IdentifierError` before emitting\n// any SQL, which fails the Alembic step outright.\nmodel TicketAttachmentRequirement {\n  attachmentId     String\n  attachmentRuleId String\n  ticketId         String @db.Uuid\n  ticket           Ticket @relation(fields: [ticketId], references: [id])\n\n  @@id([attachmentId, attachmentRuleId])\n  @@unique([attachmentId, attachmentRuleId, ticketId])\n  @@map(\"ticket_attachment_requirements\")\n}\n\n// Three more shapes, from the retest of the fix above. All three were\n// unreachable before \u2014 B2 crashed first \u2014 and none was in this schema, which is\n// the same reason the original five got through.\nmodel Region {\n  id String @id @default(uuid()) @db.Uuid\n\n  // B7: `@relation(map:)` is absent from the DMMF, like `@db.*`. Without lexing\n  // it the constraint is named after the table instead, and the bug is\n  // invisible except where `map:` is doing something \u2014 the only reason to write\n  // it. Alembic does not compare constraint names, so the gate stays quiet.\n  ticketId String @map(\"ticket_id\") @db.Uuid\n  ticket   Ticket @relation(fields: [ticketId], references: [id], map: \"custom_region_fk\")\n\n  scopeId   String   @map(\"scope_id\") @db.Uuid\n  createdAt DateTime @default(now()) @map(\"created_at\")\n\n  // B6: `sort: Desc` is in the DMMF and was simply dropped. On a composite\n  // index that is not cosmetic \u2014 (a ASC, b ASC) read backwards is (a DESC,\n  // b DESC), which serves neither `ORDER BY a, b DESC` nor `ORDER BY a DESC, b`.\n  @@index([scopeId, createdAt(sort: Desc)], map: \"idx_region_scope_created\")\n  @@map(\"regions\")\n}\n\n// B3 remainder: the *foreign key* name also overflows 63 characters. The\n// original report's example was a `_key`; it became the test case and the\n// `_fkey` path was never exercised \u2014 the response's own lesson, recurring\n// inside its own fix.\nmodel ScheduledMaintenanceWindow {\n  id      String                             @id @default(uuid()) @db.Uuid\n  regions ScheduledMaintenanceWindowRegion[]\n\n  @@map(\"scheduled_maintenance_window\")\n}\n\n// B8: `onUpdate:` is in the schema language and absent from the DMMF, exactly\n// like `@db.*` (B1) and `@relation(map:)` (B7). A field written\n// `@relation(..., onUpdate: Restrict, onDelete: Cascade)` arrives carrying\n// `relationOnDelete: 'Cascade'` and **no** `relationOnUpdate` key at all, so the\n// emitter hardcoded CASCADE \u2014 right by default and wrong whenever a schema says\n// otherwise, which `pg_dump` is the only gate here that would notice. Nothing\n// above declares one, which is the whole reason it went unseen: a fixture only\n// tests what it contains.\nmodel MaintenanceLockHolder {\n  id String @id @default(uuid()) @db.Uuid\n\n  restricted MaintenanceLock[] @relation(\"restrictedLock\")\n  inert      MaintenanceLock[] @relation(\"inertLock\")\n  nulled     MaintenanceLock[] @relation(\"nulledLock\")\n  defaulted  MaintenanceLock[] @relation(\"defaultedLock\")\n  plain      MaintenanceLock[] @relation(\"plainLock\")\n\n  @@map(\"maintenance_lock_holders\")\n}\n\nmodel MaintenanceLock {\n  id String @id @default(uuid()) @db.Uuid\n\n  // the reported shape: a declared `onUpdate` alongside a declared `onDelete`\n  restrictedId String                @map(\"restricted_id\") @db.Uuid\n  restricted   MaintenanceLockHolder @relation(\"restrictedLock\", fields: [restrictedId], references: [id], onUpdate: Restrict, onDelete: Cascade)\n\n  // `onUpdate` alone \u2014 `onDelete` still has to fall back to Prisma's default for\n  // the arity, so reading one from the other is not available\n  inertId String                @map(\"inert_id\") @db.Uuid\n  inert   MaintenanceLockHolder @relation(\"inertLock\", fields: [inertId], references: [id], onUpdate: NoAction)\n\n  // optional, with `onUpdate:` sitting *after* `map:` in the argument list: the\n  // two lexed attributes have to coexist and neither may depend on the order\n  nulledId String?                @map(\"nulled_id\") @db.Uuid\n  nulled   MaintenanceLockHolder? @relation(\"nulledLock\", fields: [nulledId], references: [id], map: \"maintenance_lock_nulled_fk\", onUpdate: SetNull)\n\n  // `SetDefault` is only legal where the column has a default to fall back to\n  defaultedId String                @default(\"00000000-0000-0000-0000-000000000000\") @map(\"defaulted_id\") @db.Uuid\n  defaulted   MaintenanceLockHolder @relation(\"defaultedLock\", fields: [defaultedId], references: [id], onUpdate: SetDefault)\n\n  // no `onUpdate` at all, so the lexer must not smear the four above onto it\n  plainId String                @map(\"plain_id\") @db.Uuid\n  plain   MaintenanceLockHolder @relation(\"plainLock\", fields: [plainId], references: [id])\n\n  @@map(\"maintenance_locks\")\n}\n\n// B9 and B10 came from review rather than from a field report or a failing\n// gate, and neither is an annotation the DMMF withholds: both were reported and\n// then dropped on the way to the DDL. That is the same failure as the eight\n// above with one fewer excuse.\n//\n// B9: a compound `@@id` whose declared order is not the field order. Prisma\n// emits `PRIMARY KEY (\"right\", \"left\")`; the per-column `primary_key=True` flags\n// cannot say that, because SQLAlchemy takes the order from the column\n// definitions and those are in DMMF field order. Nothing fails \u2014 the key still\n// enforces the same uniqueness \u2014 so the only symptom is a constraint and an\n// implicit index covering the pair the other way round. `Composite` above has\n// the same annotation with the orders agreeing, which is exactly why it never\n// caught this.\nmodel KeyOrder {\n  left  String\n  right String\n  note  String?\n\n  // a foreign key beside the compound key: two constraints on one model, which\n  // is what the emitted `__table_args__` has to hold\n  ledgerId Int?\n  ledger   Ledger? @relation(fields: [ledgerId], references: [id])\n\n  @@id([right, left])\n  @@map(\"key_order\")\n}\n\n// B9 remainder: the same shape on a table whose name makes the derived\n// `<table>_pkey` overflow 63 characters. The constraint has to be named for the\n// order to survive into a declarative model, and a name that is not truncated\n// the way the server truncates it is either a different constraint name or an\n// `IdentifierError` before any SQL is sent \u2014 the `_key`/`_fkey` lesson (B3),\n// one namespace over.\nmodel LongKeyOrder {\n  alpha String\n  beta  String\n  gamma String\n\n  @@id([gamma, alpha, beta])\n  @@map(\"compound_key_order_with_a_deliberately_overlong_table_name_here\")\n}\n\n// B10: index field modifiers other than `sort:`. `ops:` decides which queries an\n// index can serve at all \u2014 a `text_pattern_ops` index is what makes `LIKE\n// 'prefix%'` indexable under a non-C collation \u2014 and dropping it builds an index\n// that matches on name, passes an Alembic diff, and never serves the query it\n// was written for.\nmodel Catalog {\n  id      String   @id @default(uuid()) @db.Uuid\n  slug    String\n  title   String\n  code    String\n  seq     Int\n  tags    String[]\n  payload Json\n\n  // `@@unique` takes the same modifiers and was ignoring all of them: the\n  // uniques path used the column list directly\n  @@unique([code, seq(sort: Desc)], map: \"catalog_code_seq_key\")\n  // `ops: raw(...)`: the operator class arrives as its literal text\n  @@index([slug(ops: raw(\"text_pattern_ops\"))], map: \"catalog_slug_pattern_idx\")\n  // a *built-in* operator class, which arrives as Prisma's own name and is not\n  // a PostgreSQL identifier at all\n  @@index([payload(ops: JsonbPathOps)], type: Gin, map: \"catalog_payload_path_idx\")\n  // a built-in whose class is the access method's *default*, so `pg_dump` shows\n  // it either way and only a catalog lookup can tell the two apart\n  @@index([tags(ops: ArrayOps)], type: Gin, map: \"catalog_tags_idx\")\n  // one member of a composite carrying `ops:`, beside an explicit `sort: Asc`\n  // that must not be read as the descending case\n  @@index([title(ops: raw(\"text_pattern_ops\"), sort: Asc), code], map: \"catalog_title_code_idx\")\n  @@map(\"catalog_entries\")\n}\n\n// ...including on a field-level `@unique`, which is the same wire object with\n// one member and no `@@unique` line to notice.\nmodel Ledger {\n  id  Int    @id @default(autoincrement())\n  ref String @unique(sort: Desc)\n\n  orders KeyOrder[]\n\n  @@map(\"ledgers\")\n}\n\nmodel ScheduledMaintenanceWindowRegion {\n  id                           String                     @id @default(uuid()) @db.Uuid\n  scheduledMaintenanceWindowId String                     @map(\"scheduled_maintenance_window_id\") @db.Uuid\n  scheduledMaintenanceWindow   ScheduledMaintenanceWindow @relation(fields: [scheduledMaintenanceWindowId], references: [id])\n\n  @@map(\"scheduled_maintenance_window_regions\")\n}\n",
+  "dmmf": {
+    "datamodel": {
+      "enums": [
+        {
+          "name": "Role",
+          "values": [
+            {
+              "name": "OWNER",
+              "dbName": null
+            },
+            {
+              "name": "ADMIN",
+              "dbName": "administrator"
+            },
+            {
+              "name": "VIEWER",
+              "dbName": null
+            }
+          ],
+          "dbName": null
+        }
+      ],
+      "models": [
+        {
+          "name": "Account",
+          "dbName": "accounts",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "cuid",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "email",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": true,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "slug",
+              "dbName": "url_slug",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "role",
+              "kind": "enum",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "Role",
+              "default": "VIEWER",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "balance",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Decimal",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "payload",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Json",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "secret",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Bytes",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "visits",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "BigInt",
+              "default": "0",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "tags",
+              "kind": "scalar",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "createdAt",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "DateTime",
+              "default": {
+                "name": "now",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "updatedAt",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "DateTime",
+              "isGenerated": false,
+              "isUpdatedAt": true
+            },
+            {
+              "name": "posts",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Entry",
+              "relationName": "AccountToEntry",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "profile",
+              "kind": "object",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Profile",
+              "relationName": "AccountToProfile",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [
+            [
+              "slug",
+              "role"
+            ]
+          ],
+          "uniqueIndexes": [
+            {
+              "name": "slug_role",
+              "fields": [
+                "slug",
+                "role"
+              ]
+            }
+          ],
+          "isGenerated": false
+        },
+        {
+          "name": "Entry",
+          "dbName": null,
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "cuid",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "accountId",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "account",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Account",
+              "relationName": "AccountToEntry",
+              "relationFromFields": [
+                "accountId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "relationOnDelete": "Cascade",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "title",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "parentId",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "parent",
+              "kind": "object",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Entry",
+              "relationName": "tree",
+              "relationFromFields": [
+                "parentId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "children",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Entry",
+              "relationName": "tree",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "labels",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Label",
+              "relationName": "EntryToLabel",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "Profile",
+          "dbName": null,
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "Int",
+              "default": {
+                "name": "autoincrement",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "accountId",
+              "dbName": "account_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": true,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "account",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Account",
+              "relationName": "AccountToProfile",
+              "relationFromFields": [
+                "accountId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "bio",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "Label",
+          "dbName": "labels",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "Int",
+              "default": {
+                "name": "autoincrement",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "name",
+              "dbName": "label_name",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "entries",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Entry",
+              "relationName": "EntryToLabel",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "related",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Label",
+              "relationName": "similar",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "similar",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Label",
+              "relationName": "similar",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "Composite",
+          "dbName": null,
+          "fields": [
+            {
+              "name": "left",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "right",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "note",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": {
+            "name": null,
+            "fields": [
+              "left",
+              "right"
+            ]
+          },
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "Ticket",
+          "dbName": null,
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "uuid(4)",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "ticketNumber",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "Int",
+              "default": {
+                "name": "autoincrement",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "bigNumber",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "BigInt",
+              "default": {
+                "name": "autoincrement",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "readBy",
+              "kind": "scalar",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "keywords",
+              "kind": "scalar",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": [
+                "urgent",
+                "billing"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "reference",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "amount",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Decimal",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "seenAt",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "DateTime",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "priority",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Int",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "links",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "TicketAttachmentRequirement",
+              "relationName": "TicketToTicketAttachmentRequirement",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "regions",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Region",
+              "relationName": "RegionToTicket",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "TicketAttachmentRequirement",
+          "dbName": "ticket_attachment_requirements",
+          "fields": [
+            {
+              "name": "attachmentId",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "attachmentRuleId",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "ticketId",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "ticket",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Ticket",
+              "relationName": "TicketToTicketAttachmentRequirement",
+              "relationFromFields": [
+                "ticketId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": {
+            "name": null,
+            "fields": [
+              "attachmentId",
+              "attachmentRuleId"
+            ]
+          },
+          "uniqueFields": [
+            [
+              "attachmentId",
+              "attachmentRuleId",
+              "ticketId"
+            ]
+          ],
+          "uniqueIndexes": [
+            {
+              "name": null,
+              "fields": [
+                "attachmentId",
+                "attachmentRuleId",
+                "ticketId"
+              ]
+            }
+          ],
+          "isGenerated": false
+        },
+        {
+          "name": "Region",
+          "dbName": "regions",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "uuid(4)",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "ticketId",
+              "dbName": "ticket_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "ticket",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Ticket",
+              "relationName": "RegionToTicket",
+              "relationFromFields": [
+                "ticketId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "scopeId",
+              "dbName": "scope_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "createdAt",
+              "dbName": "created_at",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "DateTime",
+              "default": {
+                "name": "now",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "ScheduledMaintenanceWindow",
+          "dbName": "scheduled_maintenance_window",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "uuid(4)",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "regions",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "ScheduledMaintenanceWindowRegion",
+              "relationName": "ScheduledMaintenanceWindowToScheduledMaintenanceWindowRegion",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "MaintenanceLockHolder",
+          "dbName": "maintenance_lock_holders",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "uuid(4)",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "restricted",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLock",
+              "relationName": "restrictedLock",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "inert",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLock",
+              "relationName": "inertLock",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "nulled",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLock",
+              "relationName": "nulledLock",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "defaulted",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLock",
+              "relationName": "defaultedLock",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "plain",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLock",
+              "relationName": "plainLock",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "MaintenanceLock",
+          "dbName": "maintenance_locks",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "uuid(4)",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "restrictedId",
+              "dbName": "restricted_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "restricted",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLockHolder",
+              "relationName": "restrictedLock",
+              "relationFromFields": [
+                "restrictedId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "relationOnDelete": "Cascade",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "inertId",
+              "dbName": "inert_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "inert",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLockHolder",
+              "relationName": "inertLock",
+              "relationFromFields": [
+                "inertId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "nulledId",
+              "dbName": "nulled_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "nulled",
+              "kind": "object",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLockHolder",
+              "relationName": "nulledLock",
+              "relationFromFields": [
+                "nulledId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "defaultedId",
+              "dbName": "defaulted_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": "00000000-0000-0000-0000-000000000000",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "defaulted",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLockHolder",
+              "relationName": "defaultedLock",
+              "relationFromFields": [
+                "defaultedId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "plainId",
+              "dbName": "plain_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "plain",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "MaintenanceLockHolder",
+              "relationName": "plainLock",
+              "relationFromFields": [
+                "plainId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "KeyOrder",
+          "dbName": "key_order",
+          "fields": [
+            {
+              "name": "left",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "right",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "note",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "ledgerId",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "Int",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "ledger",
+              "kind": "object",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Ledger",
+              "relationName": "KeyOrderToLedger",
+              "relationFromFields": [
+                "ledgerId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": {
+            "name": null,
+            "fields": [
+              "right",
+              "left"
+            ]
+          },
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "LongKeyOrder",
+          "dbName": "compound_key_order_with_a_deliberately_overlong_table_name_here",
+          "fields": [
+            {
+              "name": "alpha",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "beta",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "gamma",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": {
+            "name": null,
+            "fields": [
+              "gamma",
+              "alpha",
+              "beta"
+            ]
+          },
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "Catalog",
+          "dbName": "catalog_entries",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "uuid(4)",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "slug",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "title",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "code",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "seq",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Int",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "tags",
+              "kind": "scalar",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "payload",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Json",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [
+            [
+              "code",
+              "seq"
+            ]
+          ],
+          "uniqueIndexes": [
+            {
+              "name": null,
+              "fields": [
+                "code",
+                "seq"
+              ]
+            }
+          ],
+          "isGenerated": false
+        },
+        {
+          "name": "Ledger",
+          "dbName": "ledgers",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "Int",
+              "default": {
+                "name": "autoincrement",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "ref",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": true,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "orders",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "KeyOrder",
+              "relationName": "KeyOrderToLedger",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "ScheduledMaintenanceWindowRegion",
+          "dbName": "scheduled_maintenance_window_regions",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "uuid(4)",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "scheduledMaintenanceWindowId",
+              "dbName": "scheduled_maintenance_window_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "scheduledMaintenanceWindow",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "ScheduledMaintenanceWindow",
+              "relationName": "ScheduledMaintenanceWindowToScheduledMaintenanceWindowRegion",
+              "relationFromFields": [
+                "scheduledMaintenanceWindowId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        }
+      ],
+      "types": [],
+      "indexes": [
+        {
+          "model": "Account",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Account",
+          "type": "unique",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "email"
+            }
+          ]
+        },
+        {
+          "model": "Account",
+          "type": "normal",
+          "isDefinedOnField": false,
+          "dbName": "account_email_created_idx",
+          "fields": [
+            {
+              "name": "email"
+            },
+            {
+              "name": "createdAt"
+            }
+          ]
+        },
+        {
+          "model": "Account",
+          "type": "unique",
+          "isDefinedOnField": false,
+          "name": "slug_role",
+          "fields": [
+            {
+              "name": "slug"
+            },
+            {
+              "name": "role"
+            }
+          ]
+        },
+        {
+          "model": "Entry",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Entry",
+          "type": "normal",
+          "isDefinedOnField": false,
+          "fields": [
+            {
+              "name": "accountId"
+            }
+          ]
+        },
+        {
+          "model": "Profile",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Profile",
+          "type": "unique",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "accountId"
+            }
+          ]
+        },
+        {
+          "model": "Label",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Composite",
+          "type": "id",
+          "isDefinedOnField": false,
+          "fields": [
+            {
+              "name": "left"
+            },
+            {
+              "name": "right"
+            }
+          ]
+        },
+        {
+          "model": "Ticket",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "TicketAttachmentRequirement",
+          "type": "id",
+          "isDefinedOnField": false,
+          "fields": [
+            {
+              "name": "attachmentId"
+            },
+            {
+              "name": "attachmentRuleId"
+            }
+          ]
+        },
+        {
+          "model": "TicketAttachmentRequirement",
+          "type": "unique",
+          "isDefinedOnField": false,
+          "fields": [
+            {
+              "name": "attachmentId"
+            },
+            {
+              "name": "attachmentRuleId"
+            },
+            {
+              "name": "ticketId"
+            }
+          ]
+        },
+        {
+          "model": "Region",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Region",
+          "type": "normal",
+          "isDefinedOnField": false,
+          "dbName": "idx_region_scope_created",
+          "fields": [
+            {
+              "name": "scopeId"
+            },
+            {
+              "name": "createdAt",
+              "sortOrder": "desc"
+            }
+          ]
+        },
+        {
+          "model": "ScheduledMaintenanceWindow",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "MaintenanceLockHolder",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "MaintenanceLock",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "KeyOrder",
+          "type": "id",
+          "isDefinedOnField": false,
+          "fields": [
+            {
+              "name": "right"
+            },
+            {
+              "name": "left"
+            }
+          ]
+        },
+        {
+          "model": "LongKeyOrder",
+          "type": "id",
+          "isDefinedOnField": false,
+          "fields": [
+            {
+              "name": "gamma"
+            },
+            {
+              "name": "alpha"
+            },
+            {
+              "name": "beta"
+            }
+          ]
+        },
+        {
+          "model": "Catalog",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Catalog",
+          "type": "normal",
+          "isDefinedOnField": false,
+          "dbName": "catalog_slug_pattern_idx",
+          "fields": [
+            {
+              "name": "slug",
+              "operatorClass": "text_pattern_ops"
+            }
+          ]
+        },
+        {
+          "model": "Catalog",
+          "type": "normal",
+          "isDefinedOnField": false,
+          "dbName": "catalog_payload_path_idx",
+          "algorithm": "Gin",
+          "fields": [
+            {
+              "name": "payload",
+              "operatorClass": "JsonbPathOps"
+            }
+          ]
+        },
+        {
+          "model": "Catalog",
+          "type": "normal",
+          "isDefinedOnField": false,
+          "dbName": "catalog_tags_idx",
+          "algorithm": "Gin",
+          "fields": [
+            {
+              "name": "tags",
+              "operatorClass": "ArrayOps"
+            }
+          ]
+        },
+        {
+          "model": "Catalog",
+          "type": "normal",
+          "isDefinedOnField": false,
+          "dbName": "catalog_title_code_idx",
+          "fields": [
+            {
+              "name": "title",
+              "sortOrder": "asc",
+              "operatorClass": "text_pattern_ops"
+            },
+            {
+              "name": "code"
+            }
+          ]
+        },
+        {
+          "model": "Catalog",
+          "type": "unique",
+          "isDefinedOnField": false,
+          "dbName": "catalog_code_seq_key",
+          "fields": [
+            {
+              "name": "code"
+            },
+            {
+              "name": "seq",
+              "sortOrder": "desc"
+            }
+          ]
+        },
+        {
+          "model": "Ledger",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Ledger",
+          "type": "unique",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "ref",
+              "sortOrder": "desc"
+            }
+          ]
+        },
+        {
+          "model": "ScheduledMaintenanceWindowRegion",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

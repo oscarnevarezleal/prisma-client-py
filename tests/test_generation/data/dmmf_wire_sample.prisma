@@ -1,0 +1,299 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("BENCH_DATABASE_URL")
+}
+
+generator client {
+  provider                    = "python -m prisma"
+  interface                   = "asyncio"
+  output                      = "./client"
+  enable_experimental_decimal = true
+  schemaMetadata              = true
+}
+
+enum Role {
+  OWNER
+  ADMIN  @map("administrator")
+  VIEWER
+}
+
+model Account {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  slug      String   @map("url_slug")
+  role      Role     @default(VIEWER)
+  balance   Decimal
+  payload   Json?
+  secret    Bytes?
+  visits    BigInt   @default(0)
+  tags      String[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  posts     Entry[]
+  profile   Profile?
+
+  @@unique([slug, role], name: "slug_role")
+  @@index([email, createdAt], map: "account_email_created_idx")
+  @@map("accounts")
+}
+
+model Entry {
+  id        String  @id @default(cuid())
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  title     String
+  parentId  String?
+  parent    Entry?  @relation("tree", fields: [parentId], references: [id])
+  children  Entry[] @relation("tree")
+  labels    Label[]
+
+  @@index([accountId])
+}
+
+// The FK lives on the *other* side of a to-one relation, which compiles
+// differently to `Entry.account` even though both are `to-one`.
+model Profile {
+  id        Int     @id @default(autoincrement())
+  accountId String  @unique @map("account_id")
+  account   Account @relation(fields: [accountId], references: [id])
+  bio       String?
+}
+
+model Label {
+  id      Int     @id @default(autoincrement())
+  name    String  @map("label_name")
+  entries Entry[]
+  related Label[] @relation("similar")
+  similar Label[] @relation("similar")
+
+  @@map("labels")
+}
+
+model Composite {
+  left  String
+  right String
+  note  String?
+
+  @@id([left, right])
+}
+
+// Every model below covers a defect found by a client running the migration
+// runbook against a 182-model production schema. All five produced either a
+// crash or a silent divergence, and none was reachable from the models above.
+model Ticket {
+  // B2: Prisma normalises `uuid()` to `uuid(4)` on the wire. Left attached, the
+  // versioned name matched no allowlist entry and blocked the whole schema.
+  id String @id @default(uuid()) @db.Uuid
+
+  // B5: a non-primary-key autoincrement. SQLAlchemy emits SERIAL only for an
+  // integer *primary* key, so this silently lost its sequence and every INSERT
+  // failed — with an empty Alembic diff, because server defaults are not
+  // compared.
+  ticketNumber Int    @default(autoincrement())
+  bigNumber    BigInt @default(autoincrement())
+
+  // B4: an empty scalar list default. A bare `ARRAY[]` is a PostgreSQL error,
+  // not a diff: `cannot determine type of empty array`.
+  readBy   String[] @default([]) @db.Uuid
+  keywords String[] @default(["urgent", "billing"])
+
+  // B1: `@db.*` never reaches the generator payload, so these read as `text`
+  // unless the raw schema is lexed. On the reporting client that was 554
+  // columns including every primary and foreign key.
+  reference String   @db.VarChar(40)
+  amount    Decimal  @db.Decimal(12, 2)
+  seenAt    DateTime @db.Timestamptz(6)
+  priority  Int      @db.SmallInt
+
+  links   TicketAttachmentRequirement[]
+  regions Region[]
+}
+
+// B3: the derived unique constraint name is 77 characters. PostgreSQL truncates
+// at 63 and so does Prisma; SQLAlchemy raises `IdentifierError` before emitting
+// any SQL, which fails the Alembic step outright.
+model TicketAttachmentRequirement {
+  attachmentId     String
+  attachmentRuleId String
+  ticketId         String @db.Uuid
+  ticket           Ticket @relation(fields: [ticketId], references: [id])
+
+  @@id([attachmentId, attachmentRuleId])
+  @@unique([attachmentId, attachmentRuleId, ticketId])
+  @@map("ticket_attachment_requirements")
+}
+
+// Three more shapes, from the retest of the fix above. All three were
+// unreachable before — B2 crashed first — and none was in this schema, which is
+// the same reason the original five got through.
+model Region {
+  id String @id @default(uuid()) @db.Uuid
+
+  // B7: `@relation(map:)` is absent from the DMMF, like `@db.*`. Without lexing
+  // it the constraint is named after the table instead, and the bug is
+  // invisible except where `map:` is doing something — the only reason to write
+  // it. Alembic does not compare constraint names, so the gate stays quiet.
+  ticketId String @map("ticket_id") @db.Uuid
+  ticket   Ticket @relation(fields: [ticketId], references: [id], map: "custom_region_fk")
+
+  scopeId   String   @map("scope_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // B6: `sort: Desc` is in the DMMF and was simply dropped. On a composite
+  // index that is not cosmetic — (a ASC, b ASC) read backwards is (a DESC,
+  // b DESC), which serves neither `ORDER BY a, b DESC` nor `ORDER BY a DESC, b`.
+  @@index([scopeId, createdAt(sort: Desc)], map: "idx_region_scope_created")
+  @@map("regions")
+}
+
+// B3 remainder: the *foreign key* name also overflows 63 characters. The
+// original report's example was a `_key`; it became the test case and the
+// `_fkey` path was never exercised — the response's own lesson, recurring
+// inside its own fix.
+model ScheduledMaintenanceWindow {
+  id      String                             @id @default(uuid()) @db.Uuid
+  regions ScheduledMaintenanceWindowRegion[]
+
+  @@map("scheduled_maintenance_window")
+}
+
+// B8: `onUpdate:` is in the schema language and absent from the DMMF, exactly
+// like `@db.*` (B1) and `@relation(map:)` (B7). A field written
+// `@relation(..., onUpdate: Restrict, onDelete: Cascade)` arrives carrying
+// `relationOnDelete: 'Cascade'` and **no** `relationOnUpdate` key at all, so the
+// emitter hardcoded CASCADE — right by default and wrong whenever a schema says
+// otherwise, which `pg_dump` is the only gate here that would notice. Nothing
+// above declares one, which is the whole reason it went unseen: a fixture only
+// tests what it contains.
+model MaintenanceLockHolder {
+  id String @id @default(uuid()) @db.Uuid
+
+  restricted MaintenanceLock[] @relation("restrictedLock")
+  inert      MaintenanceLock[] @relation("inertLock")
+  nulled     MaintenanceLock[] @relation("nulledLock")
+  defaulted  MaintenanceLock[] @relation("defaultedLock")
+  plain      MaintenanceLock[] @relation("plainLock")
+
+  @@map("maintenance_lock_holders")
+}
+
+model MaintenanceLock {
+  id String @id @default(uuid()) @db.Uuid
+
+  // the reported shape: a declared `onUpdate` alongside a declared `onDelete`
+  restrictedId String                @map("restricted_id") @db.Uuid
+  restricted   MaintenanceLockHolder @relation("restrictedLock", fields: [restrictedId], references: [id], onUpdate: Restrict, onDelete: Cascade)
+
+  // `onUpdate` alone — `onDelete` still has to fall back to Prisma's default for
+  // the arity, so reading one from the other is not available
+  inertId String                @map("inert_id") @db.Uuid
+  inert   MaintenanceLockHolder @relation("inertLock", fields: [inertId], references: [id], onUpdate: NoAction)
+
+  // optional, with `onUpdate:` sitting *after* `map:` in the argument list: the
+  // two lexed attributes have to coexist and neither may depend on the order
+  nulledId String?                @map("nulled_id") @db.Uuid
+  nulled   MaintenanceLockHolder? @relation("nulledLock", fields: [nulledId], references: [id], map: "maintenance_lock_nulled_fk", onUpdate: SetNull)
+
+  // `SetDefault` is only legal where the column has a default to fall back to
+  defaultedId String                @default("00000000-0000-0000-0000-000000000000") @map("defaulted_id") @db.Uuid
+  defaulted   MaintenanceLockHolder @relation("defaultedLock", fields: [defaultedId], references: [id], onUpdate: SetDefault)
+
+  // no `onUpdate` at all, so the lexer must not smear the four above onto it
+  plainId String                @map("plain_id") @db.Uuid
+  plain   MaintenanceLockHolder @relation("plainLock", fields: [plainId], references: [id])
+
+  @@map("maintenance_locks")
+}
+
+// B9 and B10 came from review rather than from a field report or a failing
+// gate, and neither is an annotation the DMMF withholds: both were reported and
+// then dropped on the way to the DDL. That is the same failure as the eight
+// above with one fewer excuse.
+//
+// B9: a compound `@@id` whose declared order is not the field order. Prisma
+// emits `PRIMARY KEY ("right", "left")`; the per-column `primary_key=True` flags
+// cannot say that, because SQLAlchemy takes the order from the column
+// definitions and those are in DMMF field order. Nothing fails — the key still
+// enforces the same uniqueness — so the only symptom is a constraint and an
+// implicit index covering the pair the other way round. `Composite` above has
+// the same annotation with the orders agreeing, which is exactly why it never
+// caught this.
+model KeyOrder {
+  left  String
+  right String
+  note  String?
+
+  // a foreign key beside the compound key: two constraints on one model, which
+  // is what the emitted `__table_args__` has to hold
+  ledgerId Int?
+  ledger   Ledger? @relation(fields: [ledgerId], references: [id])
+
+  @@id([right, left])
+  @@map("key_order")
+}
+
+// B9 remainder: the same shape on a table whose name makes the derived
+// `<table>_pkey` overflow 63 characters. The constraint has to be named for the
+// order to survive into a declarative model, and a name that is not truncated
+// the way the server truncates it is either a different constraint name or an
+// `IdentifierError` before any SQL is sent — the `_key`/`_fkey` lesson (B3),
+// one namespace over.
+model LongKeyOrder {
+  alpha String
+  beta  String
+  gamma String
+
+  @@id([gamma, alpha, beta])
+  @@map("compound_key_order_with_a_deliberately_overlong_table_name_here")
+}
+
+// B10: index field modifiers other than `sort:`. `ops:` decides which queries an
+// index can serve at all — a `text_pattern_ops` index is what makes `LIKE
+// 'prefix%'` indexable under a non-C collation — and dropping it builds an index
+// that matches on name, passes an Alembic diff, and never serves the query it
+// was written for.
+model Catalog {
+  id      String   @id @default(uuid()) @db.Uuid
+  slug    String
+  title   String
+  code    String
+  seq     Int
+  tags    String[]
+  payload Json
+
+  // `ops: raw(...)`: the operator class arrives as its literal text
+  @@index([slug(ops: raw("text_pattern_ops"))], map: "catalog_slug_pattern_idx")
+  // a *built-in* operator class, which arrives as Prisma's own name and is not
+  // a PostgreSQL identifier at all
+  @@index([payload(ops: JsonbPathOps)], type: Gin, map: "catalog_payload_path_idx")
+  // a built-in whose class is the access method's *default*, so `pg_dump` shows
+  // it either way and only a catalog lookup can tell the two apart
+  @@index([tags(ops: ArrayOps)], type: Gin, map: "catalog_tags_idx")
+  // one member of a composite carrying `ops:`, beside an explicit `sort: Asc`
+  // that must not be read as the descending case
+  @@index([title(ops: raw("text_pattern_ops"), sort: Asc), code], map: "catalog_title_code_idx")
+
+  // `@@unique` takes the same modifiers and was ignoring all of them: the
+  // uniques path used the column list directly
+  @@unique([code, seq(sort: Desc)], map: "catalog_code_seq_key")
+  @@map("catalog_entries")
+}
+
+// ...including on a field-level `@unique`, which is the same wire object with
+// one member and no `@@unique` line to notice.
+model Ledger {
+  id  Int    @id @default(autoincrement())
+  ref String @unique(sort: Desc)
+
+  orders KeyOrder[]
+
+  @@map("ledgers")
+}
+
+model ScheduledMaintenanceWindowRegion {
+  id                           String                     @id @default(uuid()) @db.Uuid
+  scheduledMaintenanceWindowId String                     @map("scheduled_maintenance_window_id") @db.Uuid
+  scheduledMaintenanceWindow   ScheduledMaintenanceWindow @relation(fields: [scheduledMaintenanceWindowId], references: [id])
+
+  @@map("scheduled_maintenance_window_regions")
+}

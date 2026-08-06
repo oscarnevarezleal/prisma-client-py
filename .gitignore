@@ -161,6 +161,9 @@ databases/*pyrightconfig.json
 # Prisma Py
 __prisma__
 
+# Benchmark scratch output (generated clients)
+benchmarks/.dual_interface/
+
 # Node
 node_modules
 

@@ -1,0 +1,645 @@
+{
+  "datasources": [
+    {
+      "name": "db",
+      "provider": "postgresql",
+      "activeProvider": "postgresql",
+      "url": {
+        "fromEnvVar": "BENCH_DATABASE_URL",
+        "value": null
+      },
+      "schemas": [],
+      "sourceFilePath": "/tmp/claude-0/-home-user-prisma-client-py/29c2c0a1-cc17-55e1-b01b-febca43467c6/scratchpad/ref/schema.prisma"
+    }
+  ],
+  "datamodel": "// A second reference schema, for `relationMode = \"prisma\"`.\n//\n// This cannot be folded into `dmmf_wire_sample.prisma`: `relationMode` is a\n// *datasource* setting and a schema has exactly one datasource, so a schema is\n// either in that mode or it is not. Under `prisma` the database has **no\n// foreign key constraints at all** \u2014 Prisma enforces relations in the query\n// engine instead, which is how PlanetScale and Vitess users run \u2014 so every\n// constraint `prisma.sa` emits would be a diff against every table.\n//\n// Measured against `prisma db push` 5.19, not read from documentation:\n//\n//   * no foreign keys on the model tables, and none on the implicit m2m join\n//     table either;\n//   * **no index** created in their place. Prisma only warns (\"relation fields\n//     will not benefit from the index usually created by the relational\n//     database under the hood ... We recommend adding an index manually\"). An\n//     emitter that helpfully adds one fails the pg_dump gate;\n//   * `NoAction` is rejected outright \u2014 \"not implemented for Postgres when\n//     using `relationMode = \\\"prisma\\\"`\" \u2014 and a self-relation must declare\n//     non-default actions, which is why `manager` below spells out `Restrict`;\n//   * `@relation(map:)` is still *accepted* and still names nothing, since\n//     there is no constraint to name. `config` below carries one so that a\n//     lexed constraint name reaching the DDL would show up here.\n\ndatasource db {\n  provider     = \"postgresql\"\n  relationMode = \"prisma\"\n  url          = env(\"BENCH_DATABASE_URL\")\n}\n\ngenerator client {\n  provider       = \"python -m prisma\"\n  interface      = \"asyncio\"\n  output         = \"./client\"\n  schemaMetadata = true\n}\n\nenum Tier {\n  FREE\n  PAID @map(\"paid_tier\")\n}\n\nmodel Tenant {\n  id      String   @id @default(cuid())\n  name    String   @map(\"tenant_name\")\n  tier    Tier     @default(FREE)\n  members Member[]\n  config  Config?\n\n  @@map(\"tenants\")\n}\n\n// to-one-inverse: `Tenant.config` is a single object whose foreign key lives\n// over here.\nmodel Config {\n  id       Int     @id @default(autoincrement())\n  tenantId String  @unique @map(\"tenant_id\")\n  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade, map: \"config_tenant_fk\")\n  theme    String?\n\n  @@map(\"configs\")\n}\n\nmodel Member {\n  id    String @id @default(cuid())\n  email String @unique\n\n  // Deliberately *not* indexed. This is the measurement the whole change turns\n  // on: Prisma creates neither a constraint nor an index for a relation scalar\n  // under `relationMode = \"prisma\"`, so anything emitted here is a diff.\n  tenantId String @map(\"tenant_id\")\n  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)\n\n  // A self-relation, which the mode forces to declare its actions. Nothing\n  // reaches the DDL from them \u2014 there is no constraint to carry them \u2014 so this\n  // is also the case where a builder reading `on_delete`/`on_update` and\n  // emitting a constraint anyway diverges most quietly.\n  managerId String?\n  manager   Member?  @relation(\"reports\", fields: [managerId], references: [id], onDelete: Restrict, onUpdate: Restrict)\n  reports   Member[] @relation(\"reports\")\n\n  groups Group[]\n\n  // A *declared* index on a relation scalar still has to be emitted. Without a\n  // pair like this the gate cannot tell \"emits no index\" from \"emits no index\n  // for this column\".\n  @@index([managerId], map: \"member_manager_idx\")\n  @@map(\"members\")\n}\n\nmodel Group {\n  id      Int      @id @default(autoincrement())\n  label   String   @map(\"group_label\")\n  members Member[]\n\n  @@map(\"groups\")\n}\n\n// A compound foreign key. With no `ForeignKey` in the metadata a declarative\n// `relationship()` has to spell its join condition out, and a compound one is a\n// conjunction rather than a single equality \u2014 a shape that is simply absent\n// from the other reference schema.\nmodel Region {\n  tenantId String @map(\"tenant_id\")\n  code     String\n  label    String\n  seats    Seat[]\n\n  @@id([tenantId, code])\n  @@map(\"regions\")\n}\n\nmodel Seat {\n  id             String @id @default(cuid())\n  regionTenantId String @map(\"region_tenant_id\")\n  regionCode     String @map(\"region_code\")\n  region         Region @relation(fields: [regionTenantId, regionCode], references: [tenantId, code], onDelete: Cascade)\n\n  @@map(\"seats\")\n}\n",
+  "dmmf": {
+    "datamodel": {
+      "enums": [
+        {
+          "name": "Tier",
+          "values": [
+            {
+              "name": "FREE",
+              "dbName": null
+            },
+            {
+              "name": "PAID",
+              "dbName": "paid_tier"
+            }
+          ],
+          "dbName": null
+        }
+      ],
+      "models": [
+        {
+          "name": "Tenant",
+          "dbName": "tenants",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "cuid",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "name",
+              "dbName": "tenant_name",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "tier",
+              "kind": "enum",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "Tier",
+              "default": "FREE",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "members",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Member",
+              "relationName": "MemberToTenant",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "config",
+              "kind": "object",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Config",
+              "relationName": "ConfigToTenant",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "Config",
+          "dbName": "configs",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "Int",
+              "default": {
+                "name": "autoincrement",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "tenantId",
+              "dbName": "tenant_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": true,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "tenant",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Tenant",
+              "relationName": "ConfigToTenant",
+              "relationFromFields": [
+                "tenantId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "relationOnDelete": "Cascade",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "theme",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "Member",
+          "dbName": "members",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "cuid",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "email",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": true,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "tenantId",
+              "dbName": "tenant_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "tenant",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Tenant",
+              "relationName": "MemberToTenant",
+              "relationFromFields": [
+                "tenantId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "relationOnDelete": "Cascade",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "managerId",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "manager",
+              "kind": "object",
+              "isList": false,
+              "isRequired": false,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Member",
+              "relationName": "reports",
+              "relationFromFields": [
+                "managerId"
+              ],
+              "relationToFields": [
+                "id"
+              ],
+              "relationOnDelete": "Restrict",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "reports",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Member",
+              "relationName": "reports",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "groups",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Group",
+              "relationName": "GroupToMember",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "Group",
+          "dbName": "groups",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "Int",
+              "default": {
+                "name": "autoincrement",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "label",
+              "dbName": "group_label",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "members",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Member",
+              "relationName": "GroupToMember",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "Region",
+          "dbName": "regions",
+          "fields": [
+            {
+              "name": "tenantId",
+              "dbName": "tenant_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "code",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "label",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "seats",
+              "kind": "object",
+              "isList": true,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Seat",
+              "relationName": "RegionToSeat",
+              "relationFromFields": [],
+              "relationToFields": [],
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": {
+            "name": null,
+            "fields": [
+              "tenantId",
+              "code"
+            ]
+          },
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        },
+        {
+          "name": "Seat",
+          "dbName": "seats",
+          "fields": [
+            {
+              "name": "id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": true,
+              "isReadOnly": false,
+              "hasDefaultValue": true,
+              "type": "String",
+              "default": {
+                "name": "cuid",
+                "args": []
+              },
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "regionTenantId",
+              "dbName": "region_tenant_id",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "regionCode",
+              "dbName": "region_code",
+              "kind": "scalar",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": true,
+              "hasDefaultValue": false,
+              "type": "String",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            },
+            {
+              "name": "region",
+              "kind": "object",
+              "isList": false,
+              "isRequired": true,
+              "isUnique": false,
+              "isId": false,
+              "isReadOnly": false,
+              "hasDefaultValue": false,
+              "type": "Region",
+              "relationName": "RegionToSeat",
+              "relationFromFields": [
+                "regionTenantId",
+                "regionCode"
+              ],
+              "relationToFields": [
+                "tenantId",
+                "code"
+              ],
+              "relationOnDelete": "Cascade",
+              "isGenerated": false,
+              "isUpdatedAt": false
+            }
+          ],
+          "primaryKey": null,
+          "uniqueFields": [],
+          "uniqueIndexes": [],
+          "isGenerated": false
+        }
+      ],
+      "types": [],
+      "indexes": [
+        {
+          "model": "Tenant",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Config",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Config",
+          "type": "unique",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "tenantId"
+            }
+          ]
+        },
+        {
+          "model": "Member",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Member",
+          "type": "unique",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "email"
+            }
+          ]
+        },
+        {
+          "model": "Member",
+          "type": "normal",
+          "isDefinedOnField": false,
+          "dbName": "member_manager_idx",
+          "fields": [
+            {
+              "name": "managerId"
+            }
+          ]
+        },
+        {
+          "model": "Group",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        },
+        {
+          "model": "Region",
+          "type": "id",
+          "isDefinedOnField": false,
+          "fields": [
+            {
+              "name": "tenantId"
+            },
+            {
+              "name": "code"
+            }
+          ]
+        },
+        {
+          "model": "Seat",
+          "type": "id",
+          "isDefinedOnField": true,
+          "fields": [
+            {
+              "name": "id"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

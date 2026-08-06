@@ -1,0 +1,120 @@
+// A second reference schema, for `relationMode = "prisma"`.
+//
+// This cannot be folded into `dmmf_wire_sample.prisma`: `relationMode` is a
+// *datasource* setting and a schema has exactly one datasource, so a schema is
+// either in that mode or it is not. Under `prisma` the database has **no
+// foreign key constraints at all** — Prisma enforces relations in the query
+// engine instead, which is how PlanetScale and Vitess users run — so every
+// constraint `prisma.sa` emits would be a diff against every table.
+//
+// Measured against `prisma db push` 5.19, not read from documentation:
+//
+//   * no foreign keys on the model tables, and none on the implicit m2m join
+//     table either;
+//   * **no index** created in their place. Prisma only warns ("relation fields
+//     will not benefit from the index usually created by the relational
+//     database under the hood ... We recommend adding an index manually"). An
+//     emitter that helpfully adds one fails the pg_dump gate;
+//   * `NoAction` is rejected outright — "not implemented for Postgres when
+//     using `relationMode = \"prisma\"`" — and a self-relation must declare
+//     non-default actions, which is why `manager` below spells out `Restrict`;
+//   * `@relation(map:)` is still *accepted* and still names nothing, since
+//     there is no constraint to name. `config` below carries one so that a
+//     lexed constraint name reaching the DDL would show up here.
+
+datasource db {
+  provider     = "postgresql"
+  relationMode = "prisma"
+  url          = env("BENCH_DATABASE_URL")
+}
+
+generator client {
+  provider       = "python -m prisma"
+  interface      = "asyncio"
+  output         = "./client"
+  schemaMetadata = true
+}
+
+enum Tier {
+  FREE
+  PAID @map("paid_tier")
+}
+
+model Tenant {
+  id      String   @id @default(cuid())
+  name    String   @map("tenant_name")
+  tier    Tier     @default(FREE)
+  members Member[]
+  config  Config?
+
+  @@map("tenants")
+}
+
+// to-one-inverse: `Tenant.config` is a single object whose foreign key lives
+// over here.
+model Config {
+  id       Int     @id @default(autoincrement())
+  tenantId String  @unique @map("tenant_id")
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade, map: "config_tenant_fk")
+  theme    String?
+
+  @@map("configs")
+}
+
+model Member {
+  id    String @id @default(cuid())
+  email String @unique
+
+  // Deliberately *not* indexed. This is the measurement the whole change turns
+  // on: Prisma creates neither a constraint nor an index for a relation scalar
+  // under `relationMode = "prisma"`, so anything emitted here is a diff.
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // A self-relation, which the mode forces to declare its actions. Nothing
+  // reaches the DDL from them — there is no constraint to carry them — so this
+  // is also the case where a builder reading `on_delete`/`on_update` and
+  // emitting a constraint anyway diverges most quietly.
+  managerId String?
+  manager   Member?  @relation("reports", fields: [managerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reports   Member[] @relation("reports")
+
+  groups Group[]
+
+  // A *declared* index on a relation scalar still has to be emitted. Without a
+  // pair like this the gate cannot tell "emits no index" from "emits no index
+  // for this column".
+  @@index([managerId], map: "member_manager_idx")
+  @@map("members")
+}
+
+model Group {
+  id      Int      @id @default(autoincrement())
+  label   String   @map("group_label")
+  members Member[]
+
+  @@map("groups")
+}
+
+// A compound foreign key. With no `ForeignKey` in the metadata a declarative
+// `relationship()` has to spell its join condition out, and a compound one is a
+// conjunction rather than a single equality — a shape that is simply absent
+// from the other reference schema.
+model Region {
+  tenantId String @map("tenant_id")
+  code     String
+  label    String
+  seats    Seat[]
+
+  @@id([tenantId, code])
+  @@map("regions")
+}
+
+model Seat {
+  id             String @id @default(cuid())
+  regionTenantId String @map("region_tenant_id")
+  regionCode     String @map("region_code")
+  region         Region @relation(fields: [regionTenantId, regionCode], references: [tenantId, code], onDelete: Cascade)
+
+  @@map("seats")
+}

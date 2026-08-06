@@ -1,0 +1,22 @@
+# PostgreSQL for the dual-client optimization loop (benchmarks/pg-lab).
+# Preferred path: `docker compose up -d`. If the docker daemon is unavailable
+# (as in sandboxed CI/dev containers), `lab.sh start` falls back to booting the
+# system postgres 16 on the same port/credentials so DATABASE_URL is identical
+# either way.
+services:
+  postgres:
+    image: postgres:16
+    container_name: pcp-bench-pg
+    environment:
+      POSTGRES_USER: bench
+      POSTGRES_PASSWORD: bench
+      POSTGRES_DB: bench
+    ports:
+      - '5433:5432'
+    tmpfs:
+      - /var/lib/postgresql/data  # throwaway data; speed over durability
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U bench -d bench']
+      interval: 2s
+      timeout: 3s
+      retries: 15
