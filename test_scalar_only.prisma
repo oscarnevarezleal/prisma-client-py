@@ -1,0 +1,45 @@
+// Test schema for scalar_fields_only configuration
+
+generator client {
+  provider           = "prisma-client-py"
+  scalar_fields_only = true
+  output             = "./test_generated"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./test.db"
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  posts     Post[]   // Should be SKIPPED in generated model
+  profile   Profile? // Should be SKIPPED in generated model
+}
+
+model Post {
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String
+  published Boolean  @default(false)
+  authorId  Int
+  author    User     @relation(fields: [authorId], references: [id]) // Should be SKIPPED
+  tags      Tag[]    // Should be SKIPPED
+  createdAt DateTime @default(now())
+}
+
+model Profile {
+  id     Int     @id @default(autoincrement())
+  bio    String?
+  userId Int     @unique
+  user   User    @relation(fields: [userId], references: [id]) // Should be SKIPPED
+}
+
+model Tag {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  posts Post[] // Should be SKIPPED
+}

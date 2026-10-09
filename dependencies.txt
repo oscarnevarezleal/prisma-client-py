@@ -1,0 +1,1745 @@
+{
+    "__main__": {
+        "bacon": 0,
+        "imports": [
+            "prisma",
+            "prisma.__main__",
+            "prisma._async_http",
+            "prisma._base_client",
+            "prisma._builder",
+            "prisma._compat",
+            "prisma._config",
+            "prisma._constants",
+            "prisma._fields",
+            "prisma._metrics",
+            "prisma._proxy",
+            "prisma._raw_query",
+            "prisma._registry",
+            "prisma._sync_http",
+            "prisma._transactions",
+            "prisma._types",
+            "prisma._types.UserOrderByInput",
+            "prisma._types.UserWhereUniqueInput",
+            "prisma._typing",
+            "prisma._utils",
+            "prisma._utils.asyncio",
+            "prisma._utils.context",
+            "prisma._utils.environment",
+            "prisma._utils.logging",
+            "prisma._utils.modules",
+            "prisma._utils.time",
+            "prisma._utils.types",
+            "prisma._vendor",
+            "prisma._vendor.lark_schema_parser",
+            "prisma._vendor.lark_schema_scan_parser",
+            "prisma.actions",
+            "prisma.bases",
+            "prisma.binaries",
+            "prisma.binaries.constants",
+            "prisma.binaries.platform",
+            "prisma.cli",
+            "prisma.cli._node",
+            "prisma.cli.cli",
+            "prisma.cli.commands",
+            "prisma.cli.commands.dev",
+            "prisma.cli.commands.fetch",
+            "prisma.cli.commands.generate",
+            "prisma.cli.commands.version",
+            "prisma.cli.custom",
+            "prisma.cli.options",
+            "prisma.cli.prisma",
+            "prisma.cli.utils",
+            "prisma.client",
+            "prisma.engine",
+            "prisma.engine._abstract",
+            "prisma.engine._http",
+            "prisma.engine._query",
+            "prisma.engine.abstract",
+            "prisma.engine.errors",
+            "prisma.engine.http",
+            "prisma.engine.query",
+            "prisma.engine.utils",
+            "prisma.enums",
+            "prisma.errors",
+            "prisma.fields",
+            "prisma.generator",
+            "prisma.generator._dsl_parser",
+            "prisma.generator._dsl_parser.parser",
+            "prisma.generator._dsl_parser.transformer",
+            "prisma.generator.errors",
+            "prisma.generator.filters",
+            "prisma.generator.generator",
+            "prisma.generator.jsonrpc",
+            "prisma.generator.models",
+            "prisma.generator.schema",
+            "prisma.generator.types",
+            "prisma.generator.utils",
+            "prisma.http",
+            "prisma.http_abstract",
+            "prisma.metadata",
+            "prisma.models",
+            "prisma.mypy",
+            "prisma.partials",
+            "prisma.testing",
+            "prisma.types",
+            "prisma.utils",
+            "prisma.validator"
+        ],
+        "name": "__main__",
+        "path": null
+    },
+    "click": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma.cli.cli",
+            "prisma.cli.commands.dev",
+            "prisma.cli.commands.fetch",
+            "prisma.cli.commands.generate",
+            "prisma.cli.commands.version",
+            "prisma.cli.custom",
+            "prisma.cli.options",
+            "prisma.cli.prisma",
+            "prisma.cli.utils",
+            "prisma.generator.models"
+        ],
+        "name": "click",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/click/__init__.py"
+    },
+    "dotenv": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._base_client"
+        ],
+        "name": "dotenv",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/dotenv/__init__.py"
+    },
+    "httpx": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._async_http",
+            "prisma._sync_http",
+            "prisma.engine._http",
+            "prisma.http_abstract",
+            "prisma.types"
+        ],
+        "name": "httpx",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/httpx/__init__.py"
+    },
+    "jinja2": {
+        "bacon": 2,
+        "imported_by": [
+            "jinja2.Environment",
+            "prisma.generator.Generator",
+            "prisma.generator.generator"
+        ],
+        "name": "jinja2",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/jinja2/__init__.py"
+    },
+    "jinja2.Environment": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma.generator.Generator",
+            "prisma.generator.generator"
+        ],
+        "imports": [
+            "jinja2",
+            "typing_extensions"
+        ],
+        "name": "jinja2.Environment",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/jinja2/Environment.py"
+    },
+    "prisma": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma",
+            "prisma.__main__",
+            "prisma._builder",
+            "prisma._types",
+            "prisma._types.UserOrderByInput",
+            "prisma._types.UserWhereUniqueInput",
+            "prisma._vendor.lark_schema_parser",
+            "prisma._vendor.lark_schema_scan_parser",
+            "prisma.actions",
+            "prisma.bases",
+            "prisma.binaries.constants",
+            "prisma.cli._node",
+            "prisma.cli.cli",
+            "prisma.cli.commands.dev",
+            "prisma.cli.commands.fetch",
+            "prisma.cli.commands.generate",
+            "prisma.cli.commands.version",
+            "prisma.cli.prisma",
+            "prisma.cli.utils",
+            "prisma.client",
+            "prisma.engine._http",
+            "prisma.engine._query",
+            "prisma.engine.abstract",
+            "prisma.engine.utils",
+            "prisma.enums",
+            "prisma.generator.Generator",
+            "prisma.generator.generator",
+            "prisma.generator.models",
+            "prisma.http",
+            "prisma.models",
+            "prisma.partials",
+            "prisma.testing",
+            "prisma.types"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._config",
+            "prisma._metrics",
+            "prisma.bases",
+            "prisma.client",
+            "prisma.errors",
+            "prisma.fields",
+            "prisma.models",
+            "prisma.partials",
+            "prisma.types",
+            "prisma.utils",
+            "prisma.validator"
+        ],
+        "name": "prisma",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/__init__.py"
+    },
+    "prisma.__main__": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "prisma",
+            "prisma.cli"
+        ],
+        "name": "prisma.__main__",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/__main__.py"
+    },
+    "prisma._async_http": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.engine._http",
+            "prisma.http"
+        ],
+        "imports": [
+            "httpx",
+            "prisma.http_abstract",
+            "typing_extensions"
+        ],
+        "name": "prisma._async_http",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_async_http.py"
+    },
+    "prisma._base_client": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._transactions",
+            "prisma.client"
+        ],
+        "imports": [
+            "dotenv",
+            "prisma._metrics",
+            "prisma._registry",
+            "prisma.generator",
+            "prisma.generator.models",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma._base_client",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_base_client.py"
+    },
+    "prisma._builder": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._constants",
+            "prisma._typing",
+            "prisma.fields",
+            "prisma.types",
+            "pydantic",
+            "pydantic.fields",
+            "typing_extensions"
+        ],
+        "name": "prisma._builder",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_builder.py"
+    },
+    "prisma._compat": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.engine._abstract"
+        ],
+        "imports": [
+            "prisma.utils",
+            "pydantic",
+            "pydantic.fields",
+            "pydantic.generics",
+            "pydantic.typing",
+            "pydantic.v1",
+            "pydantic.v1.typing",
+            "pydantic_core",
+            "pydantic_core.core_schema"
+        ],
+        "name": "prisma._compat",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_compat.py"
+    },
+    "prisma._config": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma"
+        ],
+        "imports": [
+            "prisma._proxy",
+            "pydantic",
+            "tomlkit",
+            "typing_extensions"
+        ],
+        "name": "prisma._config",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_config.py"
+    },
+    "prisma._constants": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._builder",
+            "prisma.actions",
+            "prisma.client",
+            "prisma.engine._abstract",
+            "prisma.engine._query",
+            "prisma.generator.models"
+        ],
+        "name": "prisma._constants",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_constants.py"
+    },
+    "prisma._fields": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.fields"
+        ],
+        "imports": [
+            "prisma.types",
+            "pydantic",
+            "pydantic.Json",
+            "typing_extensions"
+        ],
+        "name": "prisma._fields",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_fields.py"
+    },
+    "prisma._metrics": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma",
+            "prisma._base_client",
+            "prisma.client"
+        ],
+        "imports": [
+            "pydantic"
+        ],
+        "name": "prisma._metrics",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_metrics.py"
+    },
+    "prisma._proxy": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._config",
+            "prisma.cli._node"
+        ],
+        "imports": [
+            "typing_extensions"
+        ],
+        "name": "prisma._proxy",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_proxy.py"
+    },
+    "prisma._raw_query": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "typing_extensions"
+        ],
+        "name": "prisma._raw_query",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_raw_query.py"
+    },
+    "prisma._registry": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._base_client",
+            "prisma.client",
+            "prisma.testing"
+        ],
+        "imports": [
+            "prisma.client"
+        ],
+        "name": "prisma._registry",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_registry.py"
+    },
+    "prisma._sync_http": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.cli.cli",
+            "prisma.engine._http"
+        ],
+        "imports": [
+            "httpx",
+            "prisma.http_abstract",
+            "typing_extensions"
+        ],
+        "name": "prisma._sync_http",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_sync_http.py"
+    },
+    "prisma._transactions": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.client"
+        ],
+        "imports": [
+            "prisma._base_client"
+        ],
+        "name": "prisma._transactions",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_transactions.py"
+    },
+    "prisma._types": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._types",
+            "prisma._types.UserOrderByInput",
+            "prisma._types.UserWhereUniqueInput",
+            "prisma.engine._abstract",
+            "prisma.engine._http",
+            "prisma.http_abstract",
+            "prisma.types",
+            "prisma.utils"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._types",
+            "prisma._types.UserOrderByInput",
+            "prisma._types.UserWhereUniqueInput",
+            "prisma.engine",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma._types",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_types/__init__.py"
+    },
+    "prisma._types.UserOrderByInput": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._types"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._types",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma._types.UserOrderByInput",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_types/UserOrderByInput.py"
+    },
+    "prisma._types.UserWhereUniqueInput": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._types"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._types",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma._types.UserWhereUniqueInput",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_types/UserWhereUniqueInput.py"
+    },
+    "prisma._typing": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._builder"
+        ],
+        "name": "prisma._typing",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_typing.py"
+    },
+    "prisma._utils": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "prisma._utils.asyncio",
+            "prisma._utils.context",
+            "prisma._utils.environment",
+            "prisma._utils.logging",
+            "prisma._utils.modules",
+            "prisma._utils.time",
+            "prisma._utils.types"
+        ],
+        "name": "prisma._utils",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_utils/__init__.py"
+    },
+    "prisma._utils.asyncio": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._utils"
+        ],
+        "name": "prisma._utils.asyncio",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_utils/asyncio.py"
+    },
+    "prisma._utils.context": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._utils"
+        ],
+        "name": "prisma._utils.context",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_utils/context.py"
+    },
+    "prisma._utils.environment": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._utils",
+            "prisma._utils.logging"
+        ],
+        "name": "prisma._utils.environment",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_utils/environment.py"
+    },
+    "prisma._utils.logging": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._utils"
+        ],
+        "imports": [
+            "prisma._utils.environment"
+        ],
+        "name": "prisma._utils.logging",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_utils/logging.py"
+    },
+    "prisma._utils.modules": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._utils"
+        ],
+        "name": "prisma._utils.modules",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_utils/modules.py"
+    },
+    "prisma._utils.time": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._utils"
+        ],
+        "name": "prisma._utils.time",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_utils/time.py"
+    },
+    "prisma._utils.types": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._utils"
+        ],
+        "imports": [
+            "typing_extensions"
+        ],
+        "name": "prisma._utils.types",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_utils/types.py"
+    },
+    "prisma._vendor": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._vendor.lark_schema_parser",
+            "prisma._vendor.lark_schema_scan_parser",
+            "prisma.generator._dsl_parser.parser",
+            "prisma.generator._dsl_parser.transformer"
+        ],
+        "name": "prisma._vendor",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_vendor/__init__.py"
+    },
+    "prisma._vendor.lark_schema_parser": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.generator._dsl_parser.parser",
+            "prisma.generator._dsl_parser.transformer"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._vendor",
+            "rich",
+            "rich.tree"
+        ],
+        "name": "prisma._vendor.lark_schema_parser",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_vendor/lark_schema_parser.py"
+    },
+    "prisma._vendor.lark_schema_scan_parser": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.generator._dsl_parser.parser"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._vendor",
+            "rich",
+            "rich.tree"
+        ],
+        "name": "prisma._vendor.lark_schema_scan_parser",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/_vendor/lark_schema_scan_parser.py"
+    },
+    "prisma.actions": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.bases",
+            "prisma.client",
+            "prisma.models",
+            "prisma.partials"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._constants",
+            "prisma.bases",
+            "prisma.client",
+            "prisma.enums",
+            "prisma.errors",
+            "prisma.models",
+            "prisma.types",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.actions",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/actions.py"
+    },
+    "prisma.bases": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma",
+            "prisma.actions",
+            "prisma.models",
+            "prisma.partials"
+        ],
+        "imports": [
+            "prisma",
+            "prisma.actions",
+            "prisma.client",
+            "prisma.enums",
+            "prisma.fields",
+            "prisma.models",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.bases",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/bases.py"
+    },
+    "prisma.binaries": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.binaries.constants",
+            "prisma.cli._node",
+            "prisma.cli.commands.version",
+            "prisma.engine._query",
+            "prisma.engine.utils"
+        ],
+        "imports": [
+            "prisma.binaries.constants"
+        ],
+        "name": "prisma.binaries",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/binaries/__init__.py"
+    },
+    "prisma.binaries.constants": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.binaries"
+        ],
+        "imports": [
+            "prisma",
+            "prisma.binaries",
+            "prisma.binaries.platform"
+        ],
+        "name": "prisma.binaries.constants",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/binaries/constants.py"
+    },
+    "prisma.binaries.platform": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.binaries.constants",
+            "prisma.cli._node",
+            "prisma.cli.commands.version",
+            "prisma.engine._query",
+            "prisma.engine.utils"
+        ],
+        "name": "prisma.binaries.platform",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/binaries/platform.py"
+    },
+    "prisma.cli": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.__main__",
+            "prisma.cli.cli",
+            "prisma.cli.commands.dev",
+            "prisma.cli.commands.fetch",
+            "prisma.cli.commands.generate",
+            "prisma.cli.utils"
+        ],
+        "imports": [
+            "prisma.cli._node",
+            "prisma.cli.cli"
+        ],
+        "name": "prisma.cli",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/__init__.py"
+    },
+    "prisma.cli._node": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.cli",
+            "prisma.cli.prisma"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._proxy",
+            "prisma.binaries",
+            "prisma.binaries.platform",
+            "typing_extensions"
+        ],
+        "name": "prisma.cli._node",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/_node.py"
+    },
+    "prisma.cli.cli": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.cli"
+        ],
+        "imports": [
+            "click",
+            "prisma",
+            "prisma._sync_http",
+            "prisma.cli",
+            "prisma.cli.custom",
+            "prisma.cli.prisma",
+            "prisma.generator",
+            "prisma.generator.Generator"
+        ],
+        "name": "prisma.cli.cli",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/cli.py"
+    },
+    "prisma.cli.commands": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "name": "prisma.cli.commands",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/commands/__init__.py"
+    },
+    "prisma.cli.commands.dev": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "click",
+            "prisma",
+            "prisma.cli",
+            "prisma.cli.options"
+        ],
+        "name": "prisma.cli.commands.dev",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/commands/dev.py"
+    },
+    "prisma.cli.commands.fetch": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "click",
+            "prisma",
+            "prisma.cli",
+            "prisma.cli.prisma"
+        ],
+        "name": "prisma.cli.commands.fetch",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/commands/fetch.py"
+    },
+    "prisma.cli.commands.generate": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "click",
+            "prisma",
+            "prisma.cli",
+            "prisma.cli.options",
+            "prisma.cli.prisma",
+            "prisma.generator",
+            "prisma.generator.models",
+            "pydantic"
+        ],
+        "name": "prisma.cli.commands.generate",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/commands/generate.py"
+    },
+    "prisma.cli.commands.version": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "click",
+            "prisma",
+            "prisma.binaries",
+            "prisma.binaries.platform"
+        ],
+        "name": "prisma.cli.commands.version",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/commands/version.py"
+    },
+    "prisma.cli.custom": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.cli.cli"
+        ],
+        "imports": [
+            "click"
+        ],
+        "name": "prisma.cli.custom",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/custom.py"
+    },
+    "prisma.cli.options": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.cli.commands.dev",
+            "prisma.cli.commands.generate"
+        ],
+        "imports": [
+            "click"
+        ],
+        "name": "prisma.cli.options",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/options.py"
+    },
+    "prisma.cli.prisma": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.cli.cli",
+            "prisma.cli.commands.fetch",
+            "prisma.cli.commands.generate",
+            "prisma.cli.utils"
+        ],
+        "imports": [
+            "click",
+            "prisma",
+            "prisma.cli._node"
+        ],
+        "name": "prisma.cli.prisma",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/prisma.py"
+    },
+    "prisma.cli.utils": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "click",
+            "prisma",
+            "prisma.cli",
+            "prisma.cli.prisma",
+            "typing_extensions"
+        ],
+        "name": "prisma.cli.utils",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/cli/utils.py"
+    },
+    "prisma.client": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma",
+            "prisma._registry",
+            "prisma.actions",
+            "prisma.bases",
+            "prisma.engine._query"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._base_client",
+            "prisma._constants",
+            "prisma._metrics",
+            "prisma._registry",
+            "prisma._transactions",
+            "prisma.actions",
+            "prisma.enums",
+            "prisma.errors",
+            "prisma.generator",
+            "prisma.generator.models",
+            "prisma.metadata",
+            "prisma.models",
+            "prisma.types",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.client",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/client.py"
+    },
+    "prisma.engine": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._types",
+            "prisma.engine._http",
+            "prisma.engine._query",
+            "prisma.engine.abstract",
+            "prisma.engine.utils"
+        ],
+        "imports": [
+            "prisma.engine._abstract",
+            "prisma.engine._query",
+            "prisma.engine.abstract",
+            "prisma.engine.query"
+        ],
+        "name": "prisma.engine",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/engine/__init__.py"
+    },
+    "prisma.engine._abstract": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.engine",
+            "prisma.engine._http",
+            "prisma.engine.abstract"
+        ],
+        "imports": [
+            "prisma._compat",
+            "prisma._constants",
+            "prisma._types",
+            "prisma.types",
+            "typing_extensions"
+        ],
+        "name": "prisma.engine._abstract",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/engine/_abstract.py"
+    },
+    "prisma.engine._http": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.engine._query",
+            "prisma.engine.http"
+        ],
+        "imports": [
+            "httpx",
+            "prisma",
+            "prisma._async_http",
+            "prisma._sync_http",
+            "prisma._types",
+            "prisma.engine",
+            "prisma.engine._abstract",
+            "prisma.engine.errors",
+            "prisma.engine.utils",
+            "prisma.http_abstract",
+            "prisma.utils",
+            "typing_extensions"
+        ],
+        "name": "prisma.engine._http",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/engine/_http.py"
+    },
+    "prisma.engine._query": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.engine",
+            "prisma.engine.query"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._constants",
+            "prisma.binaries",
+            "prisma.binaries.platform",
+            "prisma.client",
+            "prisma.engine",
+            "prisma.engine._http",
+            "prisma.engine.errors",
+            "prisma.engine.utils",
+            "prisma.types",
+            "typing_extensions"
+        ],
+        "name": "prisma.engine._query",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/engine/_query.py"
+    },
+    "prisma.engine.abstract": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.engine"
+        ],
+        "imports": [
+            "prisma",
+            "prisma.engine",
+            "prisma.engine._abstract",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.engine.abstract",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/engine/abstract.py"
+    },
+    "prisma.engine.errors": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.engine._http",
+            "prisma.engine._query",
+            "prisma.engine.utils"
+        ],
+        "imports": [
+            "prisma.errors",
+            "prisma.http_abstract"
+        ],
+        "name": "prisma.engine.errors",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/engine/errors.py"
+    },
+    "prisma.engine.http": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "prisma.engine._http"
+        ],
+        "name": "prisma.engine.http",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/engine/http.py"
+    },
+    "prisma.engine.query": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.engine"
+        ],
+        "imports": [
+            "prisma.engine._query"
+        ],
+        "name": "prisma.engine.query",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/engine/query.py"
+    },
+    "prisma.engine.utils": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.engine._http",
+            "prisma.engine._query"
+        ],
+        "imports": [
+            "prisma",
+            "prisma.binaries",
+            "prisma.binaries.platform",
+            "prisma.engine",
+            "prisma.engine.errors",
+            "prisma.errors",
+            "prisma.http_abstract",
+            "prisma.utils"
+        ],
+        "name": "prisma.engine.utils",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/engine/utils.py"
+    },
+    "prisma.enums": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.actions",
+            "prisma.bases",
+            "prisma.client",
+            "prisma.enums",
+            "prisma.http",
+            "prisma.models",
+            "prisma.partials",
+            "prisma.types"
+        ],
+        "imports": [
+            "prisma",
+            "prisma.enums",
+            "prisma.models",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.enums",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/enums.py"
+    },
+    "prisma.errors": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma",
+            "prisma.actions",
+            "prisma.client",
+            "prisma.engine.errors",
+            "prisma.engine.utils",
+            "prisma.http_abstract",
+            "prisma.models"
+        ],
+        "name": "prisma.errors",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/errors.py"
+    },
+    "prisma.fields": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma",
+            "prisma._builder",
+            "prisma.bases",
+            "prisma.models",
+            "prisma.partials",
+            "prisma.types"
+        ],
+        "imports": [
+            "prisma._fields"
+        ],
+        "name": "prisma.fields",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/fields.py"
+    },
+    "prisma.generator": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._base_client",
+            "prisma.cli.cli",
+            "prisma.cli.commands.generate",
+            "prisma.client",
+            "prisma.generator.Generator",
+            "prisma.generator.generator",
+            "prisma.models"
+        ],
+        "imports": [
+            "prisma.generator._dsl_parser",
+            "prisma.generator.generator",
+            "prisma.generator.jsonrpc",
+            "prisma.generator.models",
+            "prisma.generator.types"
+        ],
+        "name": "prisma.generator",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/__init__.py"
+    },
+    "prisma.generator.Generator": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma.cli.cli"
+        ],
+        "imports": [
+            "jinja2",
+            "jinja2.Environment",
+            "prisma",
+            "prisma.generator",
+            "prisma.generator.filters",
+            "prisma.generator.jsonrpc",
+            "prisma.generator.models",
+            "prisma.generator.types",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.generator.Generator",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/Generator.py"
+    },
+    "prisma.generator._dsl_parser": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.generator",
+            "prisma.generator.models"
+        ],
+        "imports": [
+            "prisma.generator._dsl_parser.parser"
+        ],
+        "name": "prisma.generator._dsl_parser",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/_dsl_parser/__init__.py"
+    },
+    "prisma.generator._dsl_parser.parser": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.generator._dsl_parser"
+        ],
+        "imports": [
+            "prisma._vendor",
+            "prisma._vendor.lark_schema_parser",
+            "prisma._vendor.lark_schema_scan_parser",
+            "prisma.generator._dsl_parser.transformer",
+            "typing_extensions"
+        ],
+        "name": "prisma.generator._dsl_parser.parser",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/_dsl_parser/parser.py"
+    },
+    "prisma.generator._dsl_parser.transformer": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.generator._dsl_parser.parser"
+        ],
+        "imports": [
+            "prisma._vendor",
+            "prisma._vendor.lark_schema_parser",
+            "typing_extensions"
+        ],
+        "name": "prisma.generator._dsl_parser.transformer",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/_dsl_parser/transformer.py"
+    },
+    "prisma.generator.errors": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "name": "prisma.generator.errors",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/errors.py"
+    },
+    "prisma.generator.filters": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.generator.Generator",
+            "prisma.generator.generator"
+        ],
+        "name": "prisma.generator.filters",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/filters.py"
+    },
+    "prisma.generator.generator": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.generator"
+        ],
+        "imports": [
+            "jinja2",
+            "jinja2.Environment",
+            "prisma",
+            "prisma.generator",
+            "prisma.generator.filters",
+            "prisma.generator.jsonrpc",
+            "prisma.generator.models",
+            "prisma.generator.types",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.generator.generator",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/generator.py"
+    },
+    "prisma.generator.jsonrpc": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.generator",
+            "prisma.generator.Generator",
+            "prisma.generator.generator"
+        ],
+        "imports": [
+            "prisma.generator.models",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.generator.jsonrpc",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/jsonrpc.py"
+    },
+    "prisma.generator.models": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._base_client",
+            "prisma.cli.commands.generate",
+            "prisma.client",
+            "prisma.generator",
+            "prisma.generator.Generator",
+            "prisma.generator.generator",
+            "prisma.generator.jsonrpc",
+            "prisma.generator.schema",
+            "prisma.generator.utils"
+        ],
+        "imports": [
+            "click",
+            "prisma",
+            "prisma._constants",
+            "prisma.generator._dsl_parser",
+            "prisma.generator.schema",
+            "pydantic",
+            "pydantic.fields",
+            "typing_extensions"
+        ],
+        "name": "prisma.generator.models",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/models.py"
+    },
+    "prisma.generator.schema": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.generator.models"
+        ],
+        "imports": [
+            "prisma.generator.models",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.generator.schema",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/schema.py"
+    },
+    "prisma.generator.types": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.generator",
+            "prisma.generator.Generator",
+            "prisma.generator.generator"
+        ],
+        "name": "prisma.generator.types",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/types.py"
+    },
+    "prisma.generator.utils": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "prisma.generator.models"
+        ],
+        "name": "prisma.generator.utils",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/generator/utils.py"
+    },
+    "prisma.http": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._async_http",
+            "prisma.enums",
+            "prisma.models",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.http",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/http.py"
+    },
+    "prisma.http_abstract": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma._async_http",
+            "prisma._sync_http",
+            "prisma.engine._http",
+            "prisma.engine.errors",
+            "prisma.engine.utils"
+        ],
+        "imports": [
+            "httpx",
+            "prisma._types",
+            "prisma.errors",
+            "typing_extensions"
+        ],
+        "name": "prisma.http_abstract",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/http_abstract.py"
+    },
+    "prisma.metadata": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma.client"
+        ],
+        "name": "prisma.metadata",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/metadata.py"
+    },
+    "prisma.models": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma",
+            "prisma.actions",
+            "prisma.bases",
+            "prisma.client",
+            "prisma.enums",
+            "prisma.http",
+            "prisma.models",
+            "prisma.partials",
+            "prisma.types"
+        ],
+        "imports": [
+            "prisma",
+            "prisma.actions",
+            "prisma.bases",
+            "prisma.enums",
+            "prisma.errors",
+            "prisma.fields",
+            "prisma.generator",
+            "prisma.models",
+            "prisma.types",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.models",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/models.py"
+    },
+    "prisma.mypy": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "typing_extensions"
+        ],
+        "name": "prisma.mypy",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/mypy.py"
+    },
+    "prisma.partials": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma",
+            "prisma.partials"
+        ],
+        "imports": [
+            "prisma",
+            "prisma.actions",
+            "prisma.bases",
+            "prisma.enums",
+            "prisma.fields",
+            "prisma.models",
+            "prisma.partials",
+            "prisma.types",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.partials",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/partials.py"
+    },
+    "prisma.testing": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__"
+        ],
+        "imports": [
+            "prisma",
+            "prisma._registry"
+        ],
+        "name": "prisma.testing",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/testing.py"
+    },
+    "prisma.types": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma",
+            "prisma._builder",
+            "prisma._fields",
+            "prisma.actions",
+            "prisma.client",
+            "prisma.engine._abstract",
+            "prisma.engine._query",
+            "prisma.models",
+            "prisma.partials",
+            "prisma.types"
+        ],
+        "imports": [
+            "httpx",
+            "prisma",
+            "prisma._types",
+            "prisma.enums",
+            "prisma.fields",
+            "prisma.models",
+            "prisma.types",
+            "pydantic",
+            "typing_extensions"
+        ],
+        "name": "prisma.types",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/types.py"
+    },
+    "prisma.utils": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma",
+            "prisma._compat",
+            "prisma.engine._http",
+            "prisma.engine.utils"
+        ],
+        "imports": [
+            "prisma._types",
+            "typing_extensions"
+        ],
+        "name": "prisma.utils",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/utils.py"
+    },
+    "prisma.validator": {
+        "bacon": 1,
+        "imported_by": [
+            "__main__",
+            "prisma"
+        ],
+        "imports": [
+            "pydantic",
+            "pydantic.v1",
+            "pydantic.v1.annotated_types"
+        ],
+        "name": "prisma.validator",
+        "path": "/Users/oscarnevarez/playground/prisma-client-py/src/prisma/validator.py"
+    },
+    "pydantic": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._base_client",
+            "prisma._builder",
+            "prisma._compat",
+            "prisma._config",
+            "prisma._fields",
+            "prisma._metrics",
+            "prisma._types",
+            "prisma._types.UserOrderByInput",
+            "prisma._types.UserWhereUniqueInput",
+            "prisma.actions",
+            "prisma.bases",
+            "prisma.cli.commands.generate",
+            "prisma.client",
+            "prisma.engine.abstract",
+            "prisma.enums",
+            "prisma.generator.Generator",
+            "prisma.generator.generator",
+            "prisma.generator.jsonrpc",
+            "prisma.generator.models",
+            "prisma.generator.schema",
+            "prisma.http",
+            "prisma.models",
+            "prisma.partials",
+            "prisma.types",
+            "prisma.validator",
+            "pydantic",
+            "pydantic.fields",
+            "pydantic.v1",
+            "pydantic.v1.annotated_types",
+            "pydantic.v1.typing"
+        ],
+        "imports": [
+            "pydantic",
+            "pydantic.fields",
+            "pydantic_core",
+            "pydantic_core.core_schema"
+        ],
+        "name": "pydantic",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/pydantic/__init__.py"
+    },
+    "pydantic.Json": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._fields"
+        ],
+        "name": "pydantic.Json",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/pydantic/Json.py"
+    },
+    "pydantic.fields": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._builder",
+            "prisma._compat",
+            "prisma.generator.models",
+            "pydantic"
+        ],
+        "imports": [
+            "pydantic",
+            "pydantic_core",
+            "typing_extensions"
+        ],
+        "name": "pydantic.fields",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/pydantic/fields.py"
+    },
+    "pydantic.generics": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._compat"
+        ],
+        "name": "pydantic.generics",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/pydantic/generics.py"
+    },
+    "pydantic.typing": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._compat"
+        ],
+        "name": "pydantic.typing",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/pydantic/typing.py"
+    },
+    "pydantic.v1": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._compat",
+            "prisma.validator",
+            "pydantic.v1",
+            "pydantic.v1.annotated_types",
+            "pydantic.v1.typing"
+        ],
+        "imports": [
+            "pydantic",
+            "pydantic.v1",
+            "pydantic.v1.annotated_types"
+        ],
+        "name": "pydantic.v1",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/pydantic/v1/__init__.py"
+    },
+    "pydantic.v1.annotated_types": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma.validator",
+            "pydantic.v1"
+        ],
+        "imports": [
+            "pydantic",
+            "pydantic.v1",
+            "pydantic.v1.typing",
+            "typing_extensions"
+        ],
+        "name": "pydantic.v1.annotated_types",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/pydantic/v1/annotated_types.py"
+    },
+    "pydantic.v1.typing": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._compat",
+            "pydantic.v1.annotated_types"
+        ],
+        "imports": [
+            "pydantic",
+            "pydantic.v1",
+            "typing_extensions"
+        ],
+        "name": "pydantic.v1.typing",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/pydantic/v1/typing.py"
+    },
+    "pydantic_core": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._compat",
+            "pydantic",
+            "pydantic.fields",
+            "pydantic_core.core_schema"
+        ],
+        "imports": [
+            "pydantic_core.core_schema",
+            "typing_extensions"
+        ],
+        "name": "pydantic_core",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/pydantic_core/__init__.py"
+    },
+    "pydantic_core.core_schema": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._compat",
+            "pydantic",
+            "pydantic_core"
+        ],
+        "imports": [
+            "pydantic_core",
+            "typing_extensions"
+        ],
+        "name": "pydantic_core.core_schema",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/pydantic_core/core_schema.py"
+    },
+    "rich": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._vendor.lark_schema_parser",
+            "prisma._vendor.lark_schema_scan_parser",
+            "rich",
+            "rich.tree"
+        ],
+        "imports": [
+            "rich"
+        ],
+        "name": "rich",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/rich/__init__.py"
+    },
+    "rich.tree": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._vendor.lark_schema_parser",
+            "prisma._vendor.lark_schema_scan_parser"
+        ],
+        "imports": [
+            "rich"
+        ],
+        "name": "rich.tree",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/rich/tree.py"
+    },
+    "tomlkit": {
+        "bacon": 2,
+        "imported_by": [
+            "prisma._config",
+            "tomlkit"
+        ],
+        "imports": [
+            "tomlkit"
+        ],
+        "name": "tomlkit",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/tomlkit/__init__.py"
+    },
+    "typing_extensions": {
+        "bacon": 2,
+        "imported_by": [
+            "jinja2.Environment",
+            "prisma._async_http",
+            "prisma._base_client",
+            "prisma._builder",
+            "prisma._config",
+            "prisma._fields",
+            "prisma._proxy",
+            "prisma._raw_query",
+            "prisma._sync_http",
+            "prisma._types",
+            "prisma._types.UserOrderByInput",
+            "prisma._types.UserWhereUniqueInput",
+            "prisma._utils.types",
+            "prisma.actions",
+            "prisma.bases",
+            "prisma.cli._node",
+            "prisma.cli.utils",
+            "prisma.client",
+            "prisma.engine._abstract",
+            "prisma.engine._http",
+            "prisma.engine._query",
+            "prisma.engine.abstract",
+            "prisma.enums",
+            "prisma.generator.Generator",
+            "prisma.generator._dsl_parser.parser",
+            "prisma.generator._dsl_parser.transformer",
+            "prisma.generator.generator",
+            "prisma.generator.jsonrpc",
+            "prisma.generator.models",
+            "prisma.generator.schema",
+            "prisma.http",
+            "prisma.http_abstract",
+            "prisma.models",
+            "prisma.mypy",
+            "prisma.partials",
+            "prisma.types",
+            "prisma.utils",
+            "pydantic.fields",
+            "pydantic.v1.annotated_types",
+            "pydantic.v1.typing",
+            "pydantic_core",
+            "pydantic_core.core_schema"
+        ],
+        "name": "typing_extensions",
+        "path": "/Users/oscarnevarez/.pyenv/versions/3.12.11/lib/python3.12/site-packages/typing_extensions.py"
+    }
+}

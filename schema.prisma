@@ -1,0 +1,744 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-py"
+  minimalRuntime = true
+  separateModelFiles = true
+}
+
+model Model0 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model1 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model2 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model3 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model4 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model5 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model6 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model7 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model8 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model9 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model10 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model11 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model12 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model13 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model14 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model15 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model16 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model17 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model18 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model19 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model20 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model21 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model22 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model23 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model24 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model25 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model26 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model27 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model28 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model29 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model30 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model31 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model32 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model33 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model34 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model35 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model36 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model37 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model38 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model39 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model40 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model41 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model42 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model43 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model44 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model45 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model46 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model47 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model48 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model49 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model50 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model51 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model52 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model53 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model54 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model55 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model56 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model57 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model58 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+model Model59 {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  count       Int      @default(0)
+  price       Float?
+  data        String?
+}
+
+
+model TestUser {
+  id    Int    @id @default(autoincrement())
+  name  String
+  posts TestPost[]
+}
+
+model TestPost {
+  id       Int    @id @default(autoincrement())
+  title    String
+  author   TestUser   @relation(fields: [authorId], references: [id])
+  authorId Int
+}

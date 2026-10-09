@@ -1,0 +1,3 @@
+Modified generator ran at /Users/oscarnevarez/playground/prisma-client-py/src/prisma
+minimal_runtime=True
+separate_model_files=False

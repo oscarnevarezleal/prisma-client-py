@@ -1,0 +1,24 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "python"
+  output = "./src/prisma"
+  separateModelFiles = true
+  partialTypeGenerator = "./test_partials_script.py"
+}
+
+model TestUser {
+  id    Int    @id @default(autoincrement())
+  name  String
+  posts TestPost[]
+}
+
+model TestPost {
+  id       Int    @id @default(autoincrement())
+  title    String
+  author   TestUser? @relation(fields: [authorId], references: [id])
+  authorId Int?
+}
